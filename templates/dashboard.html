@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>InSighter · Threat Monitor</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg:        #0a0e1a;
+  --surface:   #111827;
+  --surface2:  #1a2235;
+  --border:    #1e2d45;
+  --border2:   #253550;
+  --text:      #e2e8f0;
+  --muted:     #64748b;
+  --muted2:    #94a3b8;
+  --accent:    #3b82f6;
+  --accent2:   #1d4ed8;
+  --green:     #10b981;
+  --yellow:    #f59e0b;
+  --orange:    #f97316;
+  --red:       #ef4444;
+  --critical:  #dc2626;
+  --mono:      'JetBrains Mono', monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;overflow-x:hidden}
+
+/* TOPBAR */
+#topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;height:50px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:100;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{
+  width:30px;height:30px;background:var(--accent);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:700;color:#fff;letter-spacing:-1px;
+}
+.logo-name{font-size:15px;font-weight:600;color:var(--text)}
+.logo-tag{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:1px}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.3)}}
+.status-text{font-size:11px;color:var(--green);font-family:var(--mono)}
+.divider{width:1px;height:20px;background:var(--border)}
+.ts{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.btn{
+  background:var(--surface2);border:1px solid var(--border2);color:var(--muted2);
+  font-size:11px;padding:5px 12px;border-radius:5px;cursor:pointer;
+  font-family:'Inter',sans-serif;transition:all .15s;
+}
+.btn:hover{background:var(--border2);color:var(--text)}
+.btn-accent{background:var(--accent2);border-color:var(--accent);color:#fff}
+.btn-accent:hover{background:var(--accent)}
+
+/* LAYOUT */
+#app{display:grid;grid-template-columns:220px 1fr;height:calc(100vh - 50px)}
+
+/* SIDEBAR */
+#sidebar{
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;gap:2px;padding:14px 10px;overflow-y:auto;
+}
+.nav-section{font-size:10px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:1px;padding:10px 8px 4px;font-weight:600}
+.nav-item{
+  display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border-radius:6px;cursor:pointer;color:var(--muted2);transition:all .15s;
+  font-size:12px;font-weight:500;
+}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:rgba(59,130,246,.15);color:var(--accent);border:1px solid rgba(59,130,246,.2)}
+.nav-icon{font-size:14px;width:18px;text-align:center}
+.nav-badge{
+  margin-left:auto;background:var(--red);color:#fff;
+  font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;
+}
+.sidebar-bottom{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
+.sidebar-stat{display:flex;justify-content:space-between;align-items:center;
+  padding:6px 8px;font-size:11px;color:var(--muted)}
+.sidebar-stat span:last-child{color:var(--text);font-family:var(--mono);font-weight:500}
+
+/* MAIN CONTENT */
+#main{overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:16px}
+
+/* PANELS */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.panel-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;border-bottom:1px solid var(--border);
+}
+.panel-title{font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:7px}
+.panel-title .dot{width:6px;height:6px;border-radius:50%}
+.panel-meta{font-size:10px;color:var(--muted);font-family:var(--mono)}
+
+/* STAT ROW */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stat{
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px;position:relative;overflow:hidden;
+}
+.stat::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+}
+.stat.s-red::after   {background:var(--red)}
+.stat.s-yellow::after{background:var(--yellow)}
+.stat.s-green::after {background:var(--green)}
+.stat.s-blue::after  {background:var(--accent)}
+.stat-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:700;font-family:var(--mono);line-height:1}
+.stat.s-red    .stat-val{color:var(--red)}
+.stat.s-yellow .stat-val{color:var(--yellow)}
+.stat.s-green  .stat-val{color:var(--green)}
+.stat.s-blue   .stat-val{color:var(--accent)}
+.stat-sub{font-size:10px;color:var(--muted);margin-top:4px}
+
+/* TWO-COL */
+.two-col{display:grid;grid-template-columns:1.5fr 1fr;gap:14px}
+
+/* USER TABLE */
+table{width:100%;border-collapse:collapse}
+thead th{
+  background:var(--bg);font-size:10px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.6px;padding:9px 14px;text-align:left;
+  border-bottom:1px solid var(--border);
+}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s;cursor:default}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.02)}
+td{padding:10px 14px;font-size:12px}
+.u-cell{display:flex;align-items:center;gap:9px}
+.av{
+  width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;
+  font-family:var(--mono);
+}
+.u-name{font-weight:500}
+.u-role{font-size:10px;color:var(--muted)}
+.score-cell{display:flex;align-items:center;gap:8px}
+.score-track{width:70px;height:4px;background:var(--border2);border-radius:2px;overflow:hidden}
+.score-fill{height:100%;border-radius:2px;transition:width .6s ease}
+.score-num{font-family:var(--mono);font-size:12px;font-weight:600;min-width:36px}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;
+  padding:2px 8px;border-radius:4px;letter-spacing:.3px}
+.badge.CRITICAL{background:rgba(220,38,38,.15);color:#f87171;border:1px solid rgba(220,38,38,.3)}
+.badge.HIGH    {background:rgba(239,68,68,.12);color:#fca5a5;border:1px solid rgba(239,68,68,.25)}
+.badge.MEDIUM  {background:rgba(245,158,11,.12);color:#fcd34d;border:1px solid rgba(245,158,11,.25)}
+.badge.LOW     {background:rgba(16,185,129,.1); color:#6ee7b7;border:1px solid rgba(16,185,129,.2)}
+.mono-sm{font-family:var(--mono);font-size:11px;color:var(--muted2)}
+
+/* ALERTS */
+.alert-feed{max-height:380px;overflow-y:auto}
+.alert-feed::-webkit-scrollbar{width:4px}
+.alert-feed::-webkit-scrollbar-track{background:transparent}
+.alert-feed::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.alert-item{
+  display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);
+  align-items:flex-start;transition:background .1s;
+}
+.alert-item:hover{background:rgba(255,255,255,.02)}
+.alert-item:last-child{border-bottom:none}
+.a-line{width:2px;min-height:36px;border-radius:1px;flex-shrink:0;margin-top:3px}
+.a-line.CRITICAL{background:var(--critical)}
+.a-line.HIGH    {background:var(--red)}
+.a-line.MEDIUM  {background:var(--yellow)}
+.a-user{font-size:12px;font-weight:600;color:var(--text)}
+.a-desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
+.a-time{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:3px}
+.a-sev{margin-left:auto;flex-shrink:0}
+
+/* RESOURCE PANEL */
+.res-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.res-item{padding:11px 16px;border-bottom:1px solid var(--border)}
+.res-item:nth-child(odd){border-right:1px solid var(--border)}
+.res-item:nth-last-child(-n+2){border-bottom:none}
+.res-item{padding:12px 16px;border-bottom:1px solid var(--border)}
+.res-item:nth-child(odd){border-right:1px solid var(--border)}
+.res-item:nth-last-child(-n+2){border-bottom:none}
+.res-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
+.res-val{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--text)}
+.res-val.warn{color:var(--yellow)}
+.res-val.danger{color:var(--red)}
+.res-sub{font-size:10px;color:var(--muted);margin-top:3px}
+.gauge-track{height:5px;background:var(--border2);border-radius:3px;margin-top:8px;overflow:hidden}
+.gauge-fill{height:100%;border-radius:3px;transition:width .8s ease}
+
+/* CHART (mini sparkline) */
+.chart-wrap{padding:10px 16px 14px}
+.sparkline-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sp-label{width:65px;font-size:11px;color:var(--muted2);text-align:right;flex-shrink:0}
+.sp-bars{flex:1;display:flex;align-items:flex-end;gap:2px;height:32px}
+.sp-bar{flex:1;border-radius:2px 2px 0 0;min-height:3px;transition:height .4s ease}
+.sp-val{width:40px;font-size:11px;font-family:var(--mono);color:var(--text);text-align:right;flex-shrink:0}
+
+/* SCROLLBAR global */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* NEW EVENT flash */
+@keyframes flashRow{0%{background:rgba(59,130,246,.18)}100%{background:transparent}}
+.flash{animation:flashRow .9s ease-out}
+
+.empty{text-align:center;padding:30px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <div class="logo">
+    <div class="logo-icon">IS</div>
+    <div>
+      <div class="logo-name">InSighter</div>
+      <div class="logo-tag">threat-monitor v0.1-poc</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="pulse-dot"></div>
+    <span class="status-text">LIVE</span>
+    <div class="divider"></div>
+    <span class="ts" id="clock">--:--:--</span>
+    <div class="divider"></div>
+    <button class="btn" onclick="reseed()">↺ Reseed</button>
+    <button class="btn btn-accent" id="sim-btn" onclick="toggleSim()">⏵ Start Simulation</button>
+    <div class="divider"></div>
+    <span class="status-text" style="color:var(--muted2)">{{ session['username'] }} · admin</span>
+    <a href="{{ url_for('logout') }}" class="btn" style="text-decoration:none">Log out</a>
+  </div>
+</div>
+
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="nav-section">Monitor</div>
+    <div class="nav-item active"><span class="nav-icon">⬡</span> Overview <span class="nav-badge" id="high-count">0</span></div>
+    <div class="nav-item"><span class="nav-icon">◈</span> User Sessions</div>
+    <div class="nav-item"><span class="nav-icon">◎</span> Alerts</div>
+    <div class="nav-section">System</div>
+    <div class="nav-item"><span class="nav-icon">▣</span> Resources</div>
+    <div class="nav-item"><span class="nav-icon">◫</span> Audit Log</div>
+    <div class="nav-section">Config</div>
+    <div class="nav-item"><span class="nav-icon">⊞</span> Integrations</div>
+    <div class="nav-item"><span class="nav-icon">◧</span> Settings</div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-stat">
+        <span>Total Logs</span>
+        <span id="sb-logs">—</span>
+      </div>
+      <div class="sidebar-stat">
+        <span>Anomalies</span>
+        <span id="sb-anom" style="color:var(--red)">—</span>
+      </div>
+      <div class="sidebar-stat">
+        <span>Users</span>
+        <span id="sb-users">5</span>
+      </div>
+      <div class="sidebar-stat">
+        <span>Sim Events</span>
+        <span id="sb-sim" style="color:var(--accent)">0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+
+    <!-- STAT ROW -->
+    <div class="stat-row" id="stat-row">
+      <div class="stat s-red"><div class="stat-label">High Risk</div><div class="stat-val" id="s-high">—</div><div class="stat-sub">users flagged</div></div>
+      <div class="stat s-yellow"><div class="stat-label">Medium Risk</div><div class="stat-val" id="s-med">—</div><div class="stat-sub">users to watch</div></div>
+      <div class="stat s-green"><div class="stat-label">Clean Users</div><div class="stat-val" id="s-low">—</div><div class="stat-sub">no anomalies</div></div>
+      <div class="stat s-blue"><div class="stat-label">Top Risk Score</div><div class="stat-val" id="s-top">—</div><div class="stat-sub" id="s-top-user">—</div></div>
+    </div>
+
+    <!-- TABLE + ALERTS -->
+    <div class="two-col">
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><div class="dot" style="background:var(--accent)"></div>User Risk Matrix</div>
+          <span class="panel-meta" id="last-update">—</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th><th>IF</th><th>OC-SVM</th><th>Risk Score</th><th>Level</th>
+              <th>Avg Files</th><th>Transfer</th><th>Off-Hrs</th>
+            </tr>
+          </thead>
+          <tbody id="user-tbody">
+            <tr><td colspan="8" class="empty">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><div class="dot" style="background:var(--red)"></div>Alert Feed</div>
+          <span class="panel-meta" id="alert-count">0 alerts</span>
+        </div>
+        <div class="alert-feed" id="alert-feed">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- SPARKLINES + RESOURCES -->
+    <div class="two-col">
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><div class="dot" style="background:var(--green)"></div>Risk History (last 20 ticks)</div>
+          <span class="panel-meta">auto-updates with simulation</span>
+        </div>
+        <div class="chart-wrap" id="sparklines">
+          <div class="empty">Start simulation to see history</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><div class="dot" style="background:var(--yellow)"></div>Runtime Resources</div>
+          <span class="panel-meta" id="res-ts">—</span>
+        </div>
+        <div class="res-grid" id="res-grid">
+          <!-- Row 1: Process CPU + RAM -->
+          <div class="res-item">
+            <div class="res-label">Process CPU %</div>
+            <div class="res-val" id="r-pcpu">—</div>
+            <div class="res-sub" id="r-pcpu-sub">InSighter process only</div>
+            <div class="gauge-track"><div class="gauge-fill" id="r-pcpu-g" style="background:var(--accent);width:0%"></div></div>
+          </div>
+          <div class="res-item">
+            <div class="res-label">Process RAM</div>
+            <div class="res-val" id="r-ram">—</div>
+            <div class="res-sub" id="r-ram-sub">of total memory</div>
+            <div class="gauge-track"><div class="gauge-fill" id="r-ram-g" style="background:var(--green);width:0%"></div></div>
+          </div>
+          <!-- Row 2: ML inference + DB read -->
+          <div class="res-item">
+            <div class="res-label">ML Inference Time</div>
+            <div class="res-val" id="r-ml">—</div>
+            <div class="res-sub">Isolation Forest per tick</div>
+          </div>
+          <div class="res-item">
+            <div class="res-label">DB Read Time</div>
+            <div class="res-val" id="r-dbr">—</div>
+            <div class="res-sub">SQLite fetch per tick</div>
+          </div>
+          <!-- Row 3: DB write + total tick -->
+          <div class="res-item">
+            <div class="res-label">DB Write Time</div>
+            <div class="res-val" id="r-dbw">—</div>
+            <div class="res-sub">log injection latency</div>
+          </div>
+          <div class="res-item">
+            <div class="res-label">Total Tick Time</div>
+            <div class="res-val" id="r-tick">—</div>
+            <div class="res-sub">end-to-end per event</div>
+          </div>
+          <!-- Row 4: Events total + eps -->
+          <div class="res-item">
+            <div class="res-label">Events Processed</div>
+            <div class="res-val" id="r-evts">—</div>
+            <div class="res-sub">since last reseed</div>
+          </div>
+          <div class="res-item">
+            <div class="res-label">Throughput</div>
+            <div class="res-val" id="r-eps">—</div>
+            <div class="res-sub">events / second</div>
+          </div>
+          <!-- Row 5: Threads + process uptime -->
+          <div class="res-item">
+            <div class="res-label">Threads</div>
+            <div class="res-val" id="r-threads">—</div>
+            <div class="res-sub">Flask worker threads</div>
+          </div>
+          <div class="res-item">
+            <div class="res-label">Process Uptime</div>
+            <div class="res-val" id="r-uptime" style="font-size:14px">—</div>
+            <div class="res-sub">since app started</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+const AVATAR_COLORS = {
+  alice:'#3b82f6', bob:'#8b5cf6', charlie:'#06b6d4',
+  diana:'#10b981', eve:'#ef4444'
+};
+const USER_ROLES = {
+  alice:'IT Admin', bob:'HR Officer', charlie:'Developer',
+  diana:'Registrar', eve:'Finance Analyst'
+};
+
+let simRunning = false;
+let simInterval = null;
+let simCount = 0;
+let riskHistory = { alice:[], bob:[], charlie:[], diana:[], eve:[] };
+
+// Clock
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB');
+}, 1000);
+
+// Score color
+function scoreColor(pct) {
+  if (pct >= 40) return 'var(--red)';
+  if (pct >= 15) return 'var(--yellow)';
+  return 'var(--green)';
+}
+function gaugeColor(val) {
+  if (val >= 80) return 'var(--red)';
+  if (val >= 60) return 'var(--yellow)';
+  return 'var(--accent)';
+}
+function fmtUptime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+async function loadScores() {
+  const r = await fetch('/api/scores');
+  const data = await r.json();
+
+  const high = data.filter(u => u.risk_level === 'HIGH').length;
+  const med  = data.filter(u => u.risk_level === 'MEDIUM').length;
+  const low  = data.filter(u => u.risk_level === 'LOW').length;
+  const top  = data[0];
+
+  document.getElementById('s-high').textContent = high;
+  document.getElementById('s-med').textContent  = med;
+  document.getElementById('s-low').textContent  = low;
+  document.getElementById('s-top').textContent  = top ? top.risk_score + '%' : '—';
+  document.getElementById('s-top-user').textContent = top ? top.user : '—';
+  document.getElementById('high-count').textContent = high;
+  document.getElementById('sb-users').textContent   = data.length;
+  document.getElementById('last-update').textContent = 'updated ' + new Date().toLocaleTimeString('en-GB');
+
+  let totalLogs = 0, totalAnom = 0;
+  data.forEach(u => { totalLogs += u.total_logs; totalAnom += u.anomalous_logs; });
+  document.getElementById('sb-logs').textContent = totalLogs;
+  document.getElementById('sb-anom').textContent = totalAnom;
+
+  // Record history
+  data.forEach(u => {
+    if (!riskHistory[u.user]) riskHistory[u.user] = [];
+    riskHistory[u.user].push(u.risk_score);
+    if (riskHistory[u.user].length > 20) riskHistory[u.user].shift();
+  });
+
+  // Table
+  const tbody = document.getElementById('user-tbody');
+  const prevScores = {};
+  tbody.querySelectorAll('tr[data-user]').forEach(tr => {
+    prevScores[tr.dataset.user] = parseFloat(tr.dataset.score || 0);
+  });
+
+  tbody.innerHTML = data.map(u => {
+    const prev = prevScores[u.user];
+    const changed = prev !== undefined && prev !== u.risk_score;
+    return `<tr data-user="${u.user}" data-score="${u.risk_score}" class="${changed ? 'flash' : ''}">
+      <td>
+        <div class="u-cell">
+          <div class="av" style="background:${AVATAR_COLORS[u.user]||'#64748b'}">${u.user[0].toUpperCase()}</div>
+          <div><div class="u-name">${u.user}</div><div class="u-role">${USER_ROLES[u.user]||''}</div></div>
+        </div>
+      </td>
+      <td class="mono-sm" style="color:${scoreColor(u.if_score)}" title="Isolation Forest component score">${u.if_score}</td>
+      <td class="mono-sm" style="color:${scoreColor(u.ocsvm_score)}" title="One-Class SVM component score">${u.ocsvm_score}</td>
+      <td>
+        <div class="score-cell" title="Blended: 0.6 × IF + 0.4 × OC-SVM">
+          <div class="score-track"><div class="score-fill" style="width:${u.risk_score}%;background:${scoreColor(u.risk_score)}"></div></div>
+          <span class="score-num" style="color:${scoreColor(u.risk_score)}">${u.risk_score}%</span>
+        </div>
+      </td>
+      <td><span class="badge ${u.risk_level}">${u.risk_level}</span></td>
+      <td class="mono-sm">${u.avg_files}</td>
+      <td class="mono-sm">${u.avg_transfer} MB</td>
+      <td class="mono-sm">${u.off_hours}</td>
+    </tr>`;
+  }).join('');
+
+  updateSparklines(data);
+}
+
+async function loadAlerts() {
+  const r = await fetch('/api/alerts');
+  const data = await r.json();
+  document.getElementById('alert-count').textContent = data.length + ' alerts';
+  const ago = (i) => {
+    const s = i * 8 + Math.floor(Math.random()*5);
+    return s < 60 ? `${s}s ago` : `${Math.floor(s/60)}m ago`;
+  };
+  document.getElementById('alert-feed').innerHTML = data.length ? data.map((a,i) => `
+    <div class="alert-item">
+      <div class="a-line ${a.severity}"></div>
+      <div style="flex:1;min-width:0">
+        <div class="a-user">${a.user} <span style="font-weight:400;color:var(--muted);font-size:10px">login@${a.login_hour}:00</span></div>
+        <div class="a-desc">${a.description}</div>
+        <div class="a-time">${ago(i)} · flagged by <b>${a.flagged_by}</b> · score ${a.final_score}</div>
+      </div>
+      <div class="a-sev"><span class="badge ${a.severity}">${a.severity}</span></div>
+    </div>
+  `).join('') : '<div class="empty">No alerts</div>';
+}
+
+function updateSparklines(data) {
+  const wrap = document.getElementById('sparklines');
+  if (!data || data.length === 0) return;
+  wrap.innerHTML = data.map(u => {
+    const hist = riskHistory[u.user] || [u.risk_score];
+    const max  = Math.max(...hist, 1);
+    const bars = hist.map(v => {
+      const h = Math.round((v / max) * 30) + 2;
+      return `<div class="sp-bar" style="height:${h}px;background:${scoreColor(v)}"></div>`;
+    }).join('');
+    return `<div class="sparkline-row">
+      <div class="sp-label">${u.user}</div>
+      <div class="sp-bars">${bars}</div>
+      <div class="sp-val" style="color:${scoreColor(u.risk_score)}">${u.risk_score}%</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadResources() {
+  try {
+    const r = await fetch('/api/resources');
+    const d = await r.json();
+    document.getElementById('res-ts').textContent = new Date().toLocaleTimeString('en-GB');
+
+    // Process CPU (InSighter only, normalized to 0-100%)
+    const cpuEl = document.getElementById('r-pcpu');
+    cpuEl.textContent = d.proc_cpu + '%';
+    cpuEl.className = 'res-val' + (d.proc_cpu >= 80 ? ' danger' : d.proc_cpu >= 40 ? ' warn' : '');
+    document.getElementById('r-pcpu-sub').textContent = `raw: ${d.proc_cpu_raw}% across all cores`;
+    document.getElementById('r-pcpu-g').style.width = Math.min(d.proc_cpu, 100) + '%';
+    document.getElementById('r-pcpu-g').style.background = gaugeColor(d.proc_cpu);
+
+    // Process RAM
+    const ramEl = document.getElementById('r-ram');
+    ramEl.textContent = d.ram_used_mb + ' MB';
+    ramEl.className = 'res-val' + (d.ram_percent >= 85 ? ' danger' : d.ram_percent >= 60 ? ' warn' : '');
+    document.getElementById('r-ram-sub').textContent = `${d.ram_percent}% of total`;
+    document.getElementById('r-ram-g').style.width = Math.min(d.ram_percent, 100) + '%';
+    document.getElementById('r-ram-g').style.background = gaugeColor(d.ram_percent);
+
+    // Timing metrics — only show after first simulation tick
+    const fmt = ms => ms > 0 ? ms.toFixed(1) + ' ms' : '—';
+    const fmtColor = (el, ms, warnAt, dangerAt) => {
+      el.textContent = fmt(ms);
+      el.className = 'res-val' + (ms >= dangerAt ? ' danger' : ms >= warnAt ? ' warn' : '');
+    };
+    fmtColor(document.getElementById('r-ml'),   d.ml_inference_ms, 300, 700);
+    fmtColor(document.getElementById('r-dbr'),  d.db_read_ms,       50, 200);
+    fmtColor(document.getElementById('r-dbw'),  d.db_write_ms,      20,  80);
+    fmtColor(document.getElementById('r-tick'), d.last_tick_ms,    400, 900);
+
+    // Events
+    document.getElementById('r-evts').textContent    = d.events_total > 0 ? d.events_total : '—';
+    document.getElementById('r-eps').textContent     = d.events_per_sec > 0 ? d.events_per_sec + '/s' : '—';
+    document.getElementById('r-threads').textContent = d.threads;
+    document.getElementById('r-uptime').textContent  = fmtUptime(d.uptime_s);
+  } catch(e) {}
+}
+
+function toggleSim() {
+  simRunning = !simRunning;
+  const btn = document.getElementById('sim-btn');
+  if (simRunning) {
+    btn.textContent = '⏹ Stop Simulation';
+    btn.classList.add('btn-accent');
+    simInterval = setInterval(async () => {
+      await fetch('/api/simulate');
+      simCount++;
+      document.getElementById('sb-sim').textContent = simCount;
+      await loadScores();
+      await loadAlerts();
+    }, 3000);
+  } else {
+    btn.textContent = '⏵ Start Simulation';
+    clearInterval(simInterval);
+  }
+}
+
+async function reseed() {
+  if (simRunning) toggleSim();
+  simCount = 0;
+  document.getElementById('sb-sim').textContent = 0;
+  riskHistory = { alice:[], bob:[], charlie:[], diana:[], eve:[] };
+  await fetch('/api/reseed');
+  await loadAll();
+}
+
+async function loadAll() {
+  await Promise.all([loadScores(), loadAlerts(), loadResources()]);
+}
+
+// Initial load
+loadAll();
+// Resources refresh every 4s
+setInterval(loadResources, 4000);
+</script>
+</body>
+</html>

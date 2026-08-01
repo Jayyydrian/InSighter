@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>InSighter · Sign In</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+:root {
+  --bg: #0a0e1a; --surface: #111827; --surface2: #1a2235;
+  --border: #1e2d45; --text: #e2e8f0; --muted: #64748b; --accent: #3b82f6;
+  --danger: #ef4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Inter',sans-serif; background:var(--bg); color:var(--text);
+  min-height:100vh; display:flex; align-items:center; justify-content:center;
+}
+.card{
+  width:340px; background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:32px; box-shadow:0 20px 60px rgba(0,0,0,.4);
+}
+.logo{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.logo-dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
+.logo-text{font-weight:700;font-size:18px;letter-spacing:.5px}
+.subtitle{color:var(--muted);font-size:12px;margin-bottom:24px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;margin-top:16px}
+input{
+  width:100%; padding:10px 12px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); font-family:'JetBrains Mono',monospace; font-size:13px;
+}
+input:focus{outline:none;border-color:var(--accent)}
+button{
+  width:100%; margin-top:22px; padding:11px; background:var(--accent); color:#fff;
+  border:none; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer;
+}
+button:hover{background:#2563eb}
+.error{
+  margin-top:14px; padding:8px 10px; background:rgba(239,68,68,.1); border:1px solid var(--danger);
+  color:#fca5a5; font-size:12px; border-radius:6px;
+}
+.hint{margin-top:20px;font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:14px}
+.hint b{color:#94a3b8}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo"><div class="logo-dot"></div><div class="logo-text">InSighter</div></div>
+    <div class="subtitle">Insider Threat Monitoring · Sign in to continue</div>
+
+    <form method="POST" action="{{ url_for('login') }}">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" required autofocus/>
+
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password" required/>
+
+      <button type="submit">Sign In</button>
+    </form>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <div class="hint">
+      <b>Demo accounts:</b><br/>
+      admin / admin123 &nbsp;(full access)<br/>
+      manager / manager123 &nbsp;(summary-only)
+    </div>
+  </div>
+</body>
+</html>
