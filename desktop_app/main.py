@@ -21,7 +21,7 @@ class InSighterApp:
     def start(self):
         ok = ensure_backend_running()
         if not ok:
-            print("ERROR: could not start InSighter backend on port 5050.")
+            print("ERROR: could not start InSighter backend.")
             sys.exit(1)
 
         self._show_login()
