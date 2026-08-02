@@ -6,6 +6,7 @@ wait for a live, reachable HTTP backend before opening the login window.
 
 import atexit
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -18,7 +19,36 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-PORT = 5050
+DEFAULT_PORT = int(os.environ.get("INSIGHTER_PORT", 5050))
+
+
+def _ping_port(port: int):
+    try:
+        response = requests.get(f"http://127.0.0.1:{port}/login", timeout=1)
+        return response.status_code in (200, 302)
+    except requests.exceptions.RequestException:
+        return False
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _resolve_port() -> int:
+    if _ping_port(DEFAULT_PORT):
+        return DEFAULT_PORT
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", DEFAULT_PORT))
+            return DEFAULT_PORT
+    except OSError:
+        return _find_free_port()
+
+
+PORT = _resolve_port()
 BASE_URL = f"http://127.0.0.1:{PORT}"
 LOG_FILE = os.path.join(PROJECT_ROOT, "backend_startup_error.log")
 SERVER_LOG = os.path.join(PROJECT_ROOT, "backend_startup.log")
@@ -47,6 +77,7 @@ def _start_backend_process():
 
     env = os.environ.copy()
     env["INSIGHTER_PORT"] = str(PORT)
+    os.environ["INSIGHTER_PORT"] = str(PORT)
 
     try:
         with open(SERVER_LOG, "a", encoding="utf-8") as log_handle:

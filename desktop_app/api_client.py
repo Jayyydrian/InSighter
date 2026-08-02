@@ -6,7 +6,7 @@ Presentation tier, per the Chapter 3 five-tier architecture.
 
 import requests
 
-BASE_URL = "http://127.0.0.1:5050"
+from desktop_app.server_launcher import BASE_URL
 
 
 class ApiError(Exception):
