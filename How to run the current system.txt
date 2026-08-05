@@ -13,7 +13,6 @@ source venv/bin/activate (kung mac gamit)
 pip install -r requirements.txt(If nag ask ang vscode to create a separate environment, click create)
 (also kung may error na lumabas after non, its fine lang nag double process lang yon ng pag activte sa scripts)
 
-python .\desktop_app\main.py
-
+python desktop_app/main.py
 
 
