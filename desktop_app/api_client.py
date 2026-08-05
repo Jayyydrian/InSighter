@@ -58,6 +58,15 @@ class ApiClient:
     def get_summary(self):
         return self._get("/api/summary")
 
+    def get_sessions(self):
+        return self._get("/api/sessions")
+
+    def get_audit_log(self):
+        return self._get("/api/audit-log")
+
+    def get_integrations(self):
+        return self._get("/api/integrations")
+
     def save_uav_config(self, payload):
         resp = self.session.post(f"{BASE_URL}/api/uav-config", json=payload)
         if resp.status_code != 200:

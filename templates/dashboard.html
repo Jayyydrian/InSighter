@@ -90,6 +90,52 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 /* MAIN CONTENT */
 #main{overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:16px}
 
+/* PAGES */
+.page{display:none;flex-direction:column;gap:16px}
+.page.active{display:flex}
+.page-title{font-size:16px;font-weight:600;color:var(--text);margin-bottom:2px}
+.page-subtitle{font-size:12px;color:var(--muted);margin-bottom:8px}
+
+/* SETTINGS FORM */
+.settings-form{display:flex;flex-direction:column;gap:16px;padding:20px}
+.form-row{display:flex;flex-direction:column;gap:6px;max-width:420px}
+.form-row label{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px}
+.form-row input[type=number],.form-row input[type=text],.form-row input[type=password]{
+  background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+  padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;
+}
+.form-row input:focus{outline:none;border-color:var(--accent)}
+.checkbox-row{display:flex;gap:18px;flex-wrap:wrap}
+.checkbox-row label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0}
+.save-btn{
+  align-self:flex-start;background:var(--accent);color:#fff;border:none;border-radius:6px;
+  padding:9px 20px;font-weight:600;font-size:12px;cursor:pointer;
+}
+.save-btn:hover{background:var(--accent2)}
+.settings-status{font-size:11px;color:var(--muted)}
+
+/* INTEGRATIONS */
+.integration-card{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);
+}
+.integration-card:last-child{border-bottom:none}
+.integration-name{font-size:13px;font-weight:600;color:var(--text)}
+.integration-note{font-size:11px;color:var(--muted);margin-top:2px}
+.status-pill{font-size:10px;font-weight:700;padding:4px 10px;border-radius:12px;text-transform:uppercase;letter-spacing:.5px}
+.status-pill.not_connected{background:rgba(100,116,139,.15);color:var(--muted2);border:1px solid var(--border2)}
+.status-pill.connected{background:rgba(16,185,129,.1);color:#6ee7b7;border:1px solid rgba(16,185,129,.2)}
+
+/* AUDIT / SESSIONS TABLES */
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{
+  text-align:left;padding:9px 12px;color:var(--muted);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;border-bottom:1px solid var(--border);background:var(--surface2);
+}
+.data-table td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text2,var(--text))}
+.data-table tr:last-child td{border-bottom:none}
+.action-tag{font-family:var(--mono);font-size:10px;color:var(--accent)}
+
 /* PANELS */
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .panel-head{
@@ -241,15 +287,15 @@ td{padding:10px 14px;font-size:12px}
   <!-- SIDEBAR -->
   <div id="sidebar">
     <div class="nav-section">Monitor</div>
-    <div class="nav-item active"><span class="nav-icon">⬡</span> Overview <span class="nav-badge" id="high-count">0</span></div>
-    <div class="nav-item"><span class="nav-icon">◈</span> User Sessions</div>
-    <div class="nav-item"><span class="nav-icon">◎</span> Alerts</div>
+    <div class="nav-item active" data-page="overview"><span class="nav-icon">⬡</span> Overview <span class="nav-badge" id="high-count">0</span></div>
+    <div class="nav-item" data-page="sessions"><span class="nav-icon">◈</span> User Sessions</div>
+    <div class="nav-item" data-page="alerts"><span class="nav-icon">◎</span> Alerts</div>
     <div class="nav-section">System</div>
-    <div class="nav-item"><span class="nav-icon">▣</span> Resources</div>
-    <div class="nav-item"><span class="nav-icon">◫</span> Audit Log</div>
+    <div class="nav-item" data-page="resources"><span class="nav-icon">▣</span> Resources</div>
+    <div class="nav-item" data-page="audit"><span class="nav-icon">◫</span> Audit Log</div>
     <div class="nav-section">Config</div>
-    <div class="nav-item"><span class="nav-icon">⊞</span> Integrations</div>
-    <div class="nav-item"><span class="nav-icon">◧</span> Settings</div>
+    <div class="nav-item" data-page="integrations"><span class="nav-icon">⊞</span> Integrations</div>
+    <div class="nav-item" data-page="settings"><span class="nav-icon">◧</span> Settings</div>
 
     <div class="sidebar-bottom">
       <div class="sidebar-stat">
@@ -273,6 +319,9 @@ td{padding:10px 14px;font-size:12px}
 
   <!-- MAIN -->
   <div id="main">
+
+  <!-- ══════════════ OVERVIEW PAGE ══════════════ -->
+  <div class="page active" id="page-overview">
 
     <!-- STAT ROW -->
     <div class="stat-row" id="stat-row">
@@ -395,6 +444,123 @@ td{padding:10px 14px;font-size:12px}
       </div>
 
     </div>
+
+  </div><!-- /page-overview -->
+
+  <!-- ══════════════ USER SESSIONS PAGE ══════════════ -->
+  <div class="page" id="page-sessions">
+    <div class="page-title">User Sessions</div>
+    <div class="page-subtitle">Raw session/log entries as ingested, most recent first.</div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><div class="dot" style="background:var(--accent)"></div>Session Log</div>
+        <span class="panel-meta" id="sessions-count">—</span>
+      </div>
+      <div style="max-height:640px;overflow-y:auto">
+        <table class="data-table">
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Login Hour</th><th>Files</th><th>Transfer (MB)</th><th>Failed Logins</th><th>Off-Hours</th></tr>
+          </thead>
+          <tbody id="sessions-tbody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ ALERTS PAGE (full) ══════════════ -->
+  <div class="page" id="page-alerts">
+    <div class="page-title">Alerts</div>
+    <div class="page-subtitle">All flagged activity from the current detection window.</div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><div class="dot" style="background:var(--red)"></div>Alert Feed</div>
+        <span class="panel-meta" id="alert-count-full">0 alerts</span>
+      </div>
+      <div class="alert-feed" id="alert-feed-full" style="max-height:640px">
+        <div class="empty">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ RESOURCES PAGE (full) ══════════════ -->
+  <div class="page" id="page-resources">
+    <div class="page-title">Resources</div>
+    <div class="page-subtitle">Live process and inference performance metrics.</div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><div class="dot" style="background:var(--yellow)"></div>Runtime Resources</div>
+        <span class="panel-meta" id="res-ts-full">—</span>
+      </div>
+      <div class="res-grid" id="res-grid-full"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════ AUDIT LOG PAGE ══════════════ -->
+  <div class="page" id="page-audit">
+    <div class="page-title">Audit Log</div>
+    <div class="page-subtitle">Privacy-Compliant Audit Mode — accountability trail for Data Privacy Act (R.A. 10173) compliance.</div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><div class="dot" style="background:var(--green)"></div>Recent Activity</div>
+        <span class="panel-meta" id="audit-count">—</span>
+      </div>
+      <div style="max-height:640px;overflow-y:auto">
+        <table class="data-table">
+          <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+          <tbody id="audit-tbody"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ INTEGRATIONS PAGE ══════════════ -->
+  <div class="page" id="page-integrations">
+    <div class="page-title">Integrations</div>
+    <div class="page-subtitle">Status of the three supported log-ingestion data sources.</div>
+    <div class="panel" id="integrations-list">
+      <div class="empty" style="padding:16px">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ══════════════ SETTINGS PAGE ══════════════ -->
+  <div class="page" id="page-settings">
+    <div class="page-title">Settings</div>
+    <div class="page-subtitle">Detection thresholds and edge-deployment configuration (UAV Configuration Module).</div>
+    <div class="panel">
+      <div class="settings-form">
+        <div class="form-row">
+          <label>Detection Threshold — High Risk (%)</label>
+          <input type="number" id="set-threshold-high" min="0" max="100" step="0.1"/>
+        </div>
+        <div class="form-row">
+          <label>Detection Threshold — Medium Risk (%)</label>
+          <input type="number" id="set-threshold-medium" min="0" max="100" step="0.1"/>
+        </div>
+        <div class="form-row">
+          <label>Sync Interval (minutes)</label>
+          <input type="number" id="set-sync-interval" min="1" max="1440"/>
+        </div>
+        <div class="form-row">
+          <label>Log Collection Targets</label>
+          <div class="checkbox-row">
+            <label><input type="checkbox" id="set-target-ad"/> Active Directory</label>
+            <label><input type="checkbox" id="set-target-gws"/> Google Workspace</label>
+            <label><input type="checkbox" id="set-target-m365"/> Microsoft 365</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Drone Operator Username</label>
+          <input type="text" id="set-drone-username"/>
+        </div>
+        <div class="form-row">
+          <label>Drone Operator Password</label>
+          <input type="password" id="set-drone-password" placeholder="Leave blank to keep unchanged"/>
+        </div>
+        <button class="save-btn" onclick="saveSettings()">Save Configuration</button>
+        <div class="settings-status" id="settings-status"></div>
+      </div>
+    </div>
+  </div>
 
   </div><!-- /main -->
 </div><!-- /app -->
@@ -519,6 +685,10 @@ async function loadAlerts() {
       <div class="a-sev"><span class="badge ${a.severity}">${a.severity}</span></div>
     </div>
   `).join('') : '<div class="empty">No alerts</div>';
+
+  // mirror into the full-page Alerts view
+  document.getElementById('alert-feed-full').innerHTML = document.getElementById('alert-feed').innerHTML;
+  document.getElementById('alert-count-full').textContent = data.length + ' alerts';
 }
 
 function updateSparklines(data) {
@@ -577,6 +747,10 @@ async function loadResources() {
     document.getElementById('r-eps').textContent     = d.events_per_sec > 0 ? d.events_per_sec + '/s' : '—';
     document.getElementById('r-threads').textContent = d.threads;
     document.getElementById('r-uptime').textContent  = fmtUptime(d.uptime_s);
+
+    // mirror into the full-page Resources view
+    document.getElementById('res-grid-full').innerHTML = document.getElementById('res-grid').innerHTML;
+    document.getElementById('res-ts-full').textContent = document.getElementById('res-ts').textContent;
   } catch(e) {}
 }
 
@@ -610,6 +784,124 @@ async function reseed() {
 
 async function loadAll() {
   await Promise.all([loadScores(), loadAlerts(), loadResources()]);
+}
+
+// ══════════════ Page switching ══════════════
+const pageLoaders = {
+  sessions:     loadSessions,
+  audit:        loadAuditLog,
+  integrations: loadIntegrations,
+  settings:     loadSettings,
+};
+
+document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+
+    const target = item.dataset.page;
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + target).classList.add('active');
+
+    if (pageLoaders[target]) pageLoaders[target]();
+  });
+});
+
+// ══════════════ User Sessions ══════════════
+async function loadSessions() {
+  const r = await fetch('/api/sessions');
+  const data = await r.json();
+  document.getElementById('sessions-count').textContent = data.length + ' sessions';
+  document.getElementById('sessions-tbody').innerHTML = data.length ? data.map(s => `
+    <tr>
+      <td>${s.id}</td>
+      <td>${s.user}</td>
+      <td>${s.login_hour}:00</td>
+      <td>${s.files_accessed}</td>
+      <td>${s.data_transferred_mb}</td>
+      <td>${s.failed_logins}</td>
+      <td>${s.off_hours_access ? 'Yes' : 'No'}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="7" class="empty">No sessions recorded</td></tr>';
+}
+
+// ══════════════ Audit Log ══════════════
+async function loadAuditLog() {
+  const r = await fetch('/api/audit-log');
+  const data = await r.json();
+  document.getElementById('audit-count').textContent = data.length + ' entries';
+  document.getElementById('audit-tbody').innerHTML = data.length ? data.map(a => `
+    <tr>
+      <td>${a.timestamp}</td>
+      <td>${a.username || '—'}</td>
+      <td><span class="action-tag">${a.action}</span></td>
+      <td>${a.detail || ''}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="4" class="empty">No audit entries yet</td></tr>';
+}
+
+// ══════════════ Integrations ══════════════
+async function loadIntegrations() {
+  const r = await fetch('/api/integrations');
+  const data = await r.json();
+  document.getElementById('integrations-list').innerHTML = data.map(i => `
+    <div class="integration-card">
+      <div>
+        <div class="integration-name">${i.name}</div>
+        <div class="integration-note">${i.note}</div>
+      </div>
+      <span class="status-pill ${i.status}">${i.status.replace('_',' ')}</span>
+    </div>
+  `).join('');
+}
+
+// ══════════════ Settings (UAV Configuration Module) ══════════════
+async function loadSettings() {
+  const r = await fetch('/api/uav-config');
+  const cfg = await r.json();
+  document.getElementById('set-threshold-high').value = cfg.threshold_high;
+  document.getElementById('set-threshold-medium').value = cfg.threshold_medium;
+  document.getElementById('set-sync-interval').value = cfg.sync_interval_minutes;
+  document.getElementById('set-drone-username').value = cfg.drone_operator_username;
+
+  const targets = (cfg.log_targets || '').split(',');
+  document.getElementById('set-target-ad').checked  = targets.includes('active_directory');
+  document.getElementById('set-target-gws').checked = targets.includes('google_workspace');
+  document.getElementById('set-target-m365').checked = targets.includes('microsoft_365');
+
+  document.getElementById('settings-status').textContent = 'Last updated: ' + cfg.updated_at;
+}
+
+async function saveSettings() {
+  const targets = [];
+  if (document.getElementById('set-target-ad').checked)  targets.push('active_directory');
+  if (document.getElementById('set-target-gws').checked) targets.push('google_workspace');
+  if (document.getElementById('set-target-m365').checked) targets.push('microsoft_365');
+
+  const payload = {
+    threshold_high: parseFloat(document.getElementById('set-threshold-high').value) || 45,
+    threshold_medium: parseFloat(document.getElementById('set-threshold-medium').value) || 30,
+    sync_interval_minutes: parseInt(document.getElementById('set-sync-interval').value) || 15,
+    log_targets: targets.join(','),
+    drone_operator_username: document.getElementById('set-drone-username').value || 'drone_operator',
+  };
+
+  const statusEl = document.getElementById('settings-status');
+  try {
+    const r = await fetch('/api/uav-config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('save failed');
+    statusEl.textContent = 'Saved successfully.';
+    statusEl.style.color = 'var(--green)';
+    document.getElementById('set-drone-password').value = '';
+    await loadSettings();
+  } catch (e) {
+    statusEl.textContent = 'Failed to save configuration.';
+    statusEl.style.color = 'var(--red)';
+  }
 }
 
 // Initial load

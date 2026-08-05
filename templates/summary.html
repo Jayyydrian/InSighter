@@ -35,6 +35,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);paddi
   padding:18px 20px; font-size:12px; color:var(--muted); line-height:1.7;
 }
 .note b{color:#94a3b8}
+.audit-panel{
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  margin-top:20px; overflow:hidden;
+}
+.audit-head{padding:14px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
+table.audit-table{width:100%;border-collapse:collapse;font-size:12px}
+table.audit-table th{
+  text-align:left;padding:9px 20px;color:var(--muted);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;border-bottom:1px solid var(--border);background:var(--surface2);
+}
+table.audit-table td{padding:8px 20px;border-bottom:1px solid var(--border)}
+table.audit-table tr:last-child td{border-bottom:none}
+.action-tag{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -67,5 +80,26 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);paddi
     detail, in line with Chapter 3's RBAC design: management personnel receive summary-level
     reports only, while full per-user access is restricted to IT administrators.
   </div>
+
+  <div class="audit-panel">
+    <div class="audit-head">Audit Trail — Privacy-Compliant Audit Mode (R.A. 10173)</div>
+    <table class="audit-table">
+      <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+      <tbody id="audit-tbody"><tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <script>
+    fetch('/api/audit-log').then(r => r.json()).then(data => {
+      document.getElementById('audit-tbody').innerHTML = data.length ? data.map(a => `
+        <tr>
+          <td>${a.timestamp}</td>
+          <td>${a.username || '—'}</td>
+          <td><span class="action-tag">${a.action}</span></td>
+          <td>${a.detail || ''}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">No audit entries yet</td></tr>';
+    });
+  </script>
 </body>
 </html>

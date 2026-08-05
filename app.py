@@ -1,8 +1,9 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from auth import init_users_table, verify_login, login_required, admin_required
+from auth import init_users_table, verify_login, login_required, admin_required, log_action
 import psutil, time, os, threading, secrets
+import sqlite3 as _sqlite3
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
@@ -53,14 +54,18 @@ def login():
         if role:
             session["username"] = username
             session["role"] = role
+            log_action(username, "LOGIN_SUCCESS", f"role={role}")
             next_url = request.args.get("next") or url_for("dashboard")
             return redirect(next_url)
+        log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
         return render_template("login.html", error="Invalid username or password."), 401
     return render_template("login.html", error=None)
 
 
 @app.route("/logout")
 def logout():
+    if "username" in session:
+        log_action(session["username"], "LOGOUT", "")
     session.clear()
     return redirect(url_for("login"))
 
@@ -95,6 +100,18 @@ def scores():
 def alerts():
     return jsonify(get_recent_alerts())
 
+@app.route("/api/sessions")
+@admin_required
+def sessions():
+    """Raw session/log rows for the User Sessions page (most recent first)."""
+    conn = _sqlite3.connect("database.db")
+    conn.row_factory = _sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM logs ORDER BY id DESC LIMIT 150"
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
 @app.route("/api/reseed")
 @admin_required
 def reseed():
@@ -103,6 +120,7 @@ def reseed():
         _stats["events_total"]   = 0
         _stats["events_per_sec"] = 0.0
         _stats["_tick_times"]    = []
+    log_action(session.get("username"), "DATA_RESEEDED", "synthetic log data regenerated")
     return jsonify({"status": "reseeded"})
 
 @app.route("/api/simulate")
@@ -139,8 +157,6 @@ def simulate():
 def whoami():
     return jsonify({"username": session.get("username"), "role": session.get("role")})
 
-
-import sqlite3 as _sqlite3
 
 @app.route("/api/summary")
 @login_required
@@ -190,7 +206,45 @@ def update_uav_config():
     ))
     conn.commit()
     conn.close()
+    log_action(session.get("username"), "CONFIG_UPDATED",
+               f"thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
+               f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
+
+
+@app.route("/api/audit-log")
+@login_required
+def audit_log():
+    """
+    Chapter 3's Privacy-Compliant Audit Mode: controlled visibility into
+    who accessed or changed what, for Data Privacy Act accountability.
+    Available to both roles (admin + management), per the design spec.
+    """
+    conn = _sqlite3.connect("database.db")
+    conn.row_factory = _sqlite3.Row
+    rows = conn.execute(
+        "SELECT username, action, detail, timestamp FROM audit_log ORDER BY id DESC LIMIT 100"
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/integrations")
+@login_required
+def integrations():
+    """
+    Status of the three data-source integrations named in Chapter 3.
+    Honestly reflects current dev state: synthetic data only, no live
+    API connection has been implemented yet.
+    """
+    return jsonify([
+        {"name": "Active Directory",  "key": "active_directory",  "status": "not_connected",
+         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
+        {"name": "Google Workspace",  "key": "google_workspace",  "status": "not_connected",
+         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
+        {"name": "Microsoft 365",     "key": "microsoft_365",     "status": "not_connected",
+         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
+    ])
 
 
 @app.route("/api/resources")
@@ -227,5 +281,5 @@ def resources():
 
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5000))
-    print(f"\n  InSighter backend -> http://127.0.0.1:{port}\n")
+    print(f"\n  InSighter backend - http://127.0.0.1:{port}\n")
     app.run(debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings

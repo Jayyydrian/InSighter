@@ -9,6 +9,10 @@ from desktop_app.profiles_tab import ProfilesTab
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.uav_config_tab import UavConfigTab
 from desktop_app.summary_tab import SummaryTab
+from desktop_app.sessions_tab import SessionsTab
+from desktop_app.resources_tab import ResourcesTab
+from desktop_app.audit_tab import AuditTab
+from desktop_app.integrations_tab import IntegrationsTab
 
 REFRESH_INTERVAL_MS = 5000
 SIM_INTERVAL_MS = 3000
@@ -184,26 +188,34 @@ class MainWindow(QMainWindow):
         overview_item = _NavItem("\u2b21", "Overview")
         overview_item.setChecked(True)
         layout.addWidget(overview_item)
-        self.overview_badge = QLabel("0")
-        self.overview_badge.setStyleSheet(
-            f"background:{RED}; color:white; font-size:9px; font-weight:700; "
-            f"border-radius:8px; padding:1px 6px;"
-        )
 
         sessions_item = _NavItem("\u25c8", "User Sessions")
         layout.addWidget(sessions_item)
+        profiles_item = _NavItem("\u25c9", "User Profiles")
+        layout.addWidget(profiles_item)
         alerts_item = _NavItem("\u25ce", "Alerts")
         layout.addWidget(alerts_item)
 
         self._nav_section(layout, "System")
         resources_item = _NavItem("\u25a3", "Resources")
         layout.addWidget(resources_item)
+        audit_item = _NavItem("\u25eb", "Audit Log")
+        layout.addWidget(audit_item)
 
         self._nav_section(layout, "Config")
-        uav_item = _NavItem("\u2b1e", "UAV / Edge Config")
-        layout.addWidget(uav_item)
+        integrations_item = _NavItem("\u229e", "Integrations")
+        layout.addWidget(integrations_item)
+        settings_item = _NavItem("\u25e7", "Settings")
+        layout.addWidget(settings_item)
 
-        for item in (overview_item, sessions_item, alerts_item, resources_item, uav_item):
+        self.overview_badge = QLabel("0")
+        self.overview_badge.setStyleSheet(
+            f"background:{RED}; color:white; font-size:9px; font-weight:700; "
+            f"border-radius:8px; padding:1px 6px;"
+        )
+
+        for item in (overview_item, sessions_item, profiles_item, alerts_item,
+                     resources_item, audit_item, integrations_item, settings_item):
             self.nav_group.addButton(item)
 
         layout.addStretch()
@@ -223,9 +235,12 @@ class MainWindow(QMainWindow):
         self._nav_pages = {
             overview_item: 0,
             sessions_item: 1,
-            alerts_item: 2,
-            resources_item: 0,   # resources panel lives on the Overview page
-            uav_item: 3,
+            profiles_item: 2,
+            alerts_item: 3,
+            resources_item: 4,
+            audit_item: 5,
+            integrations_item: 6,
+            settings_item: 7,
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -262,18 +277,26 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.dashboard_tab = DashboardTab(self.client)
+        self.sessions_tab = SessionsTab(self.client)
         self.profiles_tab = ProfilesTab(self.client)
         self.alerts_tab = AlertsTab(self.client)
+        self.resources_tab = ResourcesTab(self.client)
+        self.audit_tab = AuditTab(self.client)
+        self.integrations_tab = IntegrationsTab(self.client)
         self.uav_tab = UavConfigTab(self.client)
 
-        for page in (self.dashboard_tab, self.profiles_tab, self.alerts_tab, self.uav_tab):
+        pages = (self.dashboard_tab, self.sessions_tab, self.profiles_tab,
+                 self.alerts_tab, self.resources_tab, self.audit_tab,
+                 self.integrations_tab, self.uav_tab)
+
+        for page in pages:
             scroller = QScrollArea()
             scroller.setWidgetResizable(True)
             scroller.setStyleSheet("QScrollArea { border: none; }")
             scroller.setWidget(page)
             self.stack.addWidget(scroller)
 
-        self.tab_refs = [self.dashboard_tab, self.profiles_tab, self.alerts_tab, self.uav_tab]
+        self.tab_refs = list(pages)
 
         outer.addWidget(self.stack)
         return scroll_wrap

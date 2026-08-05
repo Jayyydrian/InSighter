@@ -42,6 +42,15 @@ def init_users_table():
             updated_at              TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            username   TEXT,
+            action     TEXT NOT NULL,
+            detail     TEXT DEFAULT '',
+            timestamp  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     row = conn.execute("SELECT COUNT(*) FROM uav_config").fetchone()[0]
     if row == 0:
         conn.execute("INSERT INTO uav_config (id) VALUES (1)")
@@ -60,6 +69,21 @@ def init_users_table():
                 (username, pw_hash, role),
             )
         conn.commit()
+    conn.close()
+
+
+def log_action(username, action, detail=""):
+    """
+    Record an entry in the audit trail. Implements Chapter 3's
+    'Privacy-Compliant Audit Mode' -- controlled visibility into who did
+    what, for Data Privacy Act (R.A. 10173) accountability.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT INTO audit_log (username, action, detail) VALUES (?,?,?)",
+        (username, action, detail),
+    )
+    conn.commit()
     conn.close()
 
 
