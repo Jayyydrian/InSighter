@@ -280,6 +280,6 @@ def resources():
     })
 
 if __name__ == "__main__":
-    port = int(os.environ.get("INSIGHTER_PORT", 5000))
+    port = int(os.environ.get("INSIGHTER_PORT", 5051))
     print(f"\n  InSighter backend - http://127.0.0.1:{port}\n")
     app.run(debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings

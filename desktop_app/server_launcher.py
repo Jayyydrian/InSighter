@@ -18,7 +18,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-PORT = int(os.environ.get("INSIGHTER_PORT", 5050))
+PORT = int(os.environ.get("INSIGHTER_PORT", 5051))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 LOG_FILE = os.path.join(PROJECT_ROOT, "backend_startup_error.log")
 SERVER_LOG = os.path.join(PROJECT_ROOT, "backend_startup.log")

@@ -43,7 +43,7 @@ pip install -r requirements.txt
 python desktop_app/main.py
 ```
 
-This automatically starts the Flask backend in the background (port 5050) and opens the
+This automatically starts the Flask backend in the background (port 5051) and opens the
 PyQt6 login window. Log in with:
 
 | Username | Password    | Role         | Access                          |
@@ -59,7 +59,7 @@ PyQt6 login window. Log in with:
 pip install -r requirements.txt
 python app.py
 ```
-Open `http://localhost:5000` and log in with the same accounts above.
+Open `http://localhost:5051` and log in with the same accounts above.
 
 The database is auto-seeded on first run.
 Use the **↺ Reseed Data** button to regenerate fresh logs anytime.
