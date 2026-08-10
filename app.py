@@ -1,15 +1,10 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-<<<<<<< Updated upstream
-from auth import init_users_table, verify_login, login_required, admin_required
-import psutil, time, os, threading, secrets
-=======
 from auth import init_users_table, verify_login, login_required, admin_required, log_action
 from ingestion import ensure_logs_schema, ingest_from_api
 from database import Row, connect, ensure_database
 import psutil, time, os, threading, secrets, requests
->>>>>>> Stashed changes
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
@@ -109,8 +104,6 @@ def scores():
 def alerts():
     return jsonify(get_recent_alerts())
 
-<<<<<<< Updated upstream
-=======
 @app.route("/api/sessions")
 @admin_required
 def sessions():
@@ -122,8 +115,6 @@ def sessions():
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
-
->>>>>>> Stashed changes
 @app.route("/api/reseed")
 @admin_required
 def reseed():
@@ -168,8 +159,6 @@ def simulate():
 def whoami():
     return jsonify({"username": session.get("username"), "role": session.get("role")})
 
-
-import sqlite3 as _sqlite3
 
 @app.route("/api/summary")
 @login_required
@@ -222,8 +211,6 @@ def update_uav_config():
     return jsonify({"status": "saved"})
 
 
-<<<<<<< Updated upstream
-=======
 @app.route("/api/audit-log")
 @login_required
 def audit_log():
@@ -286,8 +273,6 @@ def ingest():
     log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
     return jsonify({"status": "ok", "inserted": inserted})
 
-
->>>>>>> Stashed changes
 @app.route("/api/resources")
 @login_required
 def resources():

@@ -63,8 +63,6 @@ def init_users_table():
     conn.close()
 
 
-<<<<<<< Updated upstream
-=======
 def log_action(username, action, detail=""):
     """
     Record an entry in the audit trail. Implements Chapter 3's
@@ -78,9 +76,6 @@ def log_action(username, action, detail=""):
     )
     conn.commit()
     conn.close()
-
-
->>>>>>> Stashed changes
 def verify_login(username, password):
     """Return the user's role if credentials are valid, else None."""
     conn = connect()

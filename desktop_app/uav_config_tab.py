@@ -123,6 +123,9 @@ class UavConfigTab(QWidget):
         except Exception:
             return
 
+        if not cfg or "threshold_high" not in cfg:
+            return
+
         self.threshold_high.setValue(cfg["threshold_high"])
         self.threshold_medium.setValue(cfg["threshold_medium"])
         self.sync_interval.setValue(cfg["sync_interval_minutes"])

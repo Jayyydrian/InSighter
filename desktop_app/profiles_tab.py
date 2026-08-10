@@ -62,6 +62,15 @@ class ProfilesTab(QWidget):
         except Exception:
             return
 
+        if not self.users:
+            self.baseline = {}
+            self.user_list.clear()
+            self._clear_layout(self.detail_layout)
+            placeholder = QLabel("No user risk data is available yet.")
+            placeholder.setObjectName("muted")
+            self.detail_layout.addWidget(placeholder)
+            return
+
         normal_users = [u for u in self.users if u["risk_level"] == "LOW"] or self.users
 
         self.baseline = {
