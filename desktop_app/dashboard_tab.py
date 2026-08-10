@@ -356,7 +356,7 @@ class DashboardTab(QWidget):
 
         self.table.setRowCount(len(users))
         for row, u in enumerate(users):
-            self.table.setCellWidget(row, 0, self._user_cell(u["user"]))
+            self.table.setCellWidget(row, 0, self._user_cell(u["user"], u.get("role")))
 
             for col, key in ((1, "if_score"), (2, "ocsvm_score")):
                 item = QTableWidgetItem(str(u[key]))
@@ -383,7 +383,7 @@ class DashboardTab(QWidget):
                 del hist[0]
         self._update_sparklines()
 
-    def _user_cell(self, username):
+    def _user_cell(self, username, role=None):
         w = QWidget()
         h = QHBoxLayout(w)
         h.setContentsMargins(10, 4, 10, 4)
@@ -402,10 +402,10 @@ class DashboardTab(QWidget):
         text_col.setSpacing(0)
         name = QLabel(username)
         name.setStyleSheet(f"color:{TEXT}; font-weight:500; font-size:12px;")
-        role = QLabel(USER_ROLES.get(username, ""))
-        role.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        role_label = QLabel(role or USER_ROLES.get(username, ""))
+        role_label.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         text_col.addWidget(name)
-        text_col.addWidget(role)
+        text_col.addWidget(role_label)
 
         h.addWidget(av)
         h.addLayout(text_col)

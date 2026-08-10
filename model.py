@@ -1,10 +1,12 @@
-import sqlite3
 import random
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
+from privacy import sanitize_event
+from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
+from database import connect
 
 FEATURES = ["login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"]
 
@@ -12,6 +14,8 @@ FEATURES = ["login_hour", "files_accessed", "data_transferred_mb", "failed_login
 IF_WEIGHT    = 0.6
 OCSVM_WEIGHT = 0.4
 CONTAMINATION = 0.08  # expected proportion of anomalous logs, shared by both models
+MIN_ROLE_SAMPLES = 20
+MIN_ROLE_USERS = 2
 
 
 def _scale_0_100(raw):
@@ -23,29 +27,62 @@ def _scale_0_100(raw):
     return (raw - lo) / (hi - lo) * 100
 
 
-def _run_ensemble(df):
-    """Fit both models on df's features and return the df with per-row scores attached."""
-    X = StandardScaler().fit_transform(df[FEATURES])
+def _fit_group_models(group):
+    """Fit the anomaly models for one role's normal-behavior population."""
+    X = StandardScaler().fit_transform(group[FEATURES])
 
-    # --- Isolation Forest ---
-    if_model = IsolationForest(contamination=CONTAMINATION, random_state=42, n_estimators=200)
+    if_model = IsolationForest(
+        contamination=CONTAMINATION,
+        random_state=42,
+        n_estimators=200,
+    )
     if_model.fit(X)
-    # decision_function: higher = more normal, so flip sign -> higher = more anomalous
-    df["if_score"] = _scale_0_100(-if_model.decision_function(X))
-    df["is_anomaly"] = (if_model.predict(X) == -1).astype(int)
+    if_scores = _scale_0_100(-if_model.decision_function(X))
+    is_anomaly = (if_model.predict(X) == -1).astype(int)
 
-    # --- One-Class SVM ---
     ocsvm_model = OneClassSVM(kernel="rbf", nu=CONTAMINATION, gamma="auto")
     ocsvm_model.fit(X)
-    df["ocsvm_score"] = _scale_0_100(-ocsvm_model.decision_function(X))
+    ocsvm_scores = _scale_0_100(-ocsvm_model.decision_function(X))
+    return if_scores, is_anomaly, ocsvm_scores
 
-    # --- Weighted ensemble ---
-    df["final_score"] = IF_WEIGHT * df["if_score"] + OCSVM_WEIGHT * df["ocsvm_score"]
+
+def _run_ensemble(df):
+    """Fit separate anomaly models for each sufficiently large role population."""
+    df = attach_roles(df)
+    fallback_scores = _fit_group_models(df)
+    df["if_score"] = fallback_scores[0]
+    df["is_anomaly"] = fallback_scores[1]
+    df["ocsvm_score"] = fallback_scores[2]
+
+    # A small or unknown role keeps the fallback model until enough events
+    # arrive for a stable role-specific profile.
+    role_groups = [
+        (role, group)
+        for role, group in df.groupby("role")
+        if role != "unknown" and group["user"].nunique() >= MIN_ROLE_USERS
+    ]
+    for role, group in role_groups:
+        if role != "__fallback__" and len(group) < MIN_ROLE_SAMPLES:
+            continue
+        if_scores, anomalies, ocsvm_scores = _fit_group_models(group)
+        df.loc[group.index, "if_score"] = if_scores
+        df.loc[group.index, "is_anomaly"] = anomalies
+        df.loc[group.index, "ocsvm_score"] = ocsvm_scores
+
+    # --- Role baseline deviation ---
+    df = attach_roles(df)
+    baselines, overall = calculate_role_baselines(df)
+    df = attach_baseline_deviations(df, baselines, overall)
+    df["final_score"] = (
+        IF_WEIGHT * df["if_score"]
+        + OCSVM_WEIGHT * df["ocsvm_score"]
+        + 0.1 * df["role_baseline_score"]
+    ).clip(upper=100)
     return df
 
 
 def score_users():
-    conn = sqlite3.connect("database.db")
+    conn = connect()
     df = pd.read_sql("SELECT * FROM logs", conn)
     conn.close()
 
@@ -61,6 +98,8 @@ def score_users():
         if_score=("if_score", "mean"),
         ocsvm_score=("ocsvm_score", "mean"),
         risk_score=("final_score", "mean"),
+        role=("role", "first"),
+        role_baseline_score=("role_baseline_score", "mean"),
     ).reset_index()
 
     summary["risk_score"]  = summary["risk_score"].round(1)
@@ -72,12 +111,13 @@ def score_users():
     summary["avg_files"]         = summary["avg_files"].round(1)
     summary["avg_transfer"]      = summary["avg_transfer"].round(1)
     summary["avg_failed_logins"] = summary["avg_failed_logins"].round(1)
+    summary["role_baseline_score"] = summary["role_baseline_score"].round(1)
 
     return summary.sort_values("risk_score", ascending=False).to_dict(orient="records")
 
 
 def get_recent_alerts():
-    conn = sqlite3.connect("database.db")
+    conn = connect()
     df = pd.read_sql("SELECT * FROM logs ORDER BY id DESC LIMIT 600", conn)
     conn.close()
 
@@ -130,7 +170,7 @@ def get_recent_alerts():
 
 def inject_live_event():
     """Randomly inject a new log row to simulate live fluctuation."""
-    conn = sqlite3.connect("database.db")
+    conn = connect()
     users = ["alice", "bob", "charlie", "diana", "eve"]
     weights = [0.15, 0.15, 0.15, 0.15, 0.40]   # eve more likely to spike
     user = random.choices(users, weights=weights)[0]
@@ -155,9 +195,19 @@ def inject_live_event():
                    random.randint(1,15), round(random.uniform(1,40),2),
                    random.randint(0,1), 0)
 
+    sanitized = sanitize_event(dict(zip(
+        ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
+        row,
+    )))
     conn.execute(
-        "INSERT INTO logs (user,login_hour,files_accessed,data_transferred_mb,failed_logins,off_hours_access) VALUES (?,?,?,?,?,?)",
-        row
+        """INSERT INTO logs
+        (user, login_hour, files_accessed, data_transferred_mb,
+         failed_logins, off_hours_access, source, payload_encrypted)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        tuple(sanitized[key] for key in (
+            "user", "login_hour", "files_accessed", "data_transferred_mb",
+            "failed_logins", "off_hours_access", "source", "payload_encrypted",
+        )),
     )
     conn.commit()
     conn.close()

@@ -70,6 +70,17 @@ class ApiClient:
     def simulate(self):
         return self._get("/api/simulate")
 
+    def ingest(self):
+        resp = self.session.post(f"{BASE_URL}/api/ingest")
+        if resp.status_code == 401:
+            raise ApiError(401, "Session expired. Please log in again.")
+        if resp.status_code == 403:
+            raise ApiError(403, "Access restricted to administrator accounts.")
+        if resp.status_code != 200:
+            message = resp.json().get("error", "API ingestion failed.")
+            raise ApiError(resp.status_code, message)
+        return resp.json()
+
     # ── Internal ─────────────────────────────────────────────────────────
     def _get(self, path):
         resp = self.session.get(f"{BASE_URL}{path}")

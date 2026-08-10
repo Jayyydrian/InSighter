@@ -11,17 +11,17 @@ Implements the Authentication Tier described in Chapter 3:
                         individual user activity details)
 """
 
-import sqlite3
 import bcrypt
 from functools import wraps
 from flask import session, redirect, url_for, request, render_template
+from database import connect
 
 DB_PATH = "database.db"
 
 
 def init_users_table():
     """Create the users table and seed default accounts if empty."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,9 +63,27 @@ def init_users_table():
     conn.close()
 
 
+<<<<<<< Updated upstream
+=======
+def log_action(username, action, detail=""):
+    """
+    Record an entry in the audit trail. Implements Chapter 3's
+    'Privacy-Compliant Audit Mode' -- controlled visibility into who did
+    what, for Data Privacy Act (R.A. 10173) accountability.
+    """
+    conn = connect()
+    conn.execute(
+        "INSERT INTO audit_log (username, action, detail) VALUES (?,?,?)",
+        (username, action, detail),
+    )
+    conn.commit()
+    conn.close()
+
+
+>>>>>>> Stashed changes
 def verify_login(username, password):
     """Return the user's role if credentials are valid, else None."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     row = conn.execute(
         "SELECT password_hash, role FROM users WHERE username = ?", (username,)
     ).fetchone()

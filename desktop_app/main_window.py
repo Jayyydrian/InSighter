@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QStackedWidget, QButtonGroup, QScrollArea
+    QFrame, QStackedWidget, QButtonGroup, QScrollArea, QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime
 
@@ -9,6 +9,14 @@ from desktop_app.profiles_tab import ProfilesTab
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.uav_config_tab import UavConfigTab
 from desktop_app.summary_tab import SummaryTab
+<<<<<<< Updated upstream
+=======
+from desktop_app.sessions_tab import SessionsTab
+from desktop_app.role_sessions_tab import RoleSessionsTab
+from desktop_app.resources_tab import ResourcesTab
+from desktop_app.audit_tab import AuditTab
+from desktop_app.integrations_tab import IntegrationsTab
+>>>>>>> Stashed changes
 
 REFRESH_INTERVAL_MS = 5000
 SIM_INTERVAL_MS = 3000
@@ -135,6 +143,10 @@ class MainWindow(QMainWindow):
             reseed_btn.clicked.connect(self._reseed)
             h.addWidget(reseed_btn)
 
+            ingest_btn = QPushButton("\u2193 Ingest API")
+            ingest_btn.clicked.connect(self._ingest)
+            h.addWidget(ingest_btn)
+
             self.sim_btn = QPushButton("\u2b35 Start Simulation")
             self.sim_btn.setObjectName("primary")
             self.sim_btn.clicked.connect(self._toggle_simulation)
@@ -184,12 +196,38 @@ class MainWindow(QMainWindow):
         overview_item = _NavItem("\u2b21", "Overview")
         overview_item.setChecked(True)
         layout.addWidget(overview_item)
+<<<<<<< Updated upstream
+=======
+
+        sessions_item = _NavItem("\u25c8", "User Sessions")
+        layout.addWidget(sessions_item)
+        role_sessions_item = _NavItem("\u25c9", "Role-Based Users")
+        layout.addWidget(role_sessions_item)
+        profiles_item = _NavItem("\u25c9", "User Profiles")
+        layout.addWidget(profiles_item)
+        alerts_item = _NavItem("\u25ce", "Alerts")
+        layout.addWidget(alerts_item)
+
+        self._nav_section(layout, "System")
+        resources_item = _NavItem("\u25a3", "Resources")
+        layout.addWidget(resources_item)
+        audit_item = _NavItem("\u25eb", "Audit Log")
+        layout.addWidget(audit_item)
+
+        self._nav_section(layout, "Config")
+        integrations_item = _NavItem("\u229e", "Integrations")
+        layout.addWidget(integrations_item)
+        settings_item = _NavItem("\u25e7", "Settings")
+        layout.addWidget(settings_item)
+
+>>>>>>> Stashed changes
         self.overview_badge = QLabel("0")
         self.overview_badge.setStyleSheet(
             f"background:{RED}; color:white; font-size:9px; font-weight:700; "
             f"border-radius:8px; padding:1px 6px;"
         )
 
+<<<<<<< Updated upstream
         sessions_item = _NavItem("\u25c8", "User Sessions")
         layout.addWidget(sessions_item)
         alerts_item = _NavItem("\u25ce", "Alerts")
@@ -204,6 +242,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(uav_item)
 
         for item in (overview_item, sessions_item, alerts_item, resources_item, uav_item):
+=======
+        for item in (overview_item, sessions_item, role_sessions_item, profiles_item, alerts_item,
+                     resources_item, audit_item, integrations_item, settings_item):
+>>>>>>> Stashed changes
             self.nav_group.addButton(item)
 
         layout.addStretch()
@@ -223,9 +265,19 @@ class MainWindow(QMainWindow):
         self._nav_pages = {
             overview_item: 0,
             sessions_item: 1,
+<<<<<<< Updated upstream
             alerts_item: 2,
             resources_item: 0,   # resources panel lives on the Overview page
             uav_item: 3,
+=======
+            role_sessions_item: 2,
+            profiles_item: 3,
+            alerts_item: 4,
+            resources_item: 5,
+            audit_item: 6,
+            integrations_item: 7,
+            settings_item: 8,
+>>>>>>> Stashed changes
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -262,11 +314,24 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.dashboard_tab = DashboardTab(self.client)
+<<<<<<< Updated upstream
+=======
+        self.sessions_tab = SessionsTab(self.client)
+        self.role_sessions_tab = RoleSessionsTab(self.client)
+>>>>>>> Stashed changes
         self.profiles_tab = ProfilesTab(self.client)
         self.alerts_tab = AlertsTab(self.client)
         self.uav_tab = UavConfigTab(self.client)
 
+<<<<<<< Updated upstream
         for page in (self.dashboard_tab, self.profiles_tab, self.alerts_tab, self.uav_tab):
+=======
+        pages = (self.dashboard_tab, self.sessions_tab, self.role_sessions_tab, self.profiles_tab,
+                 self.alerts_tab, self.resources_tab, self.audit_tab,
+                 self.integrations_tab, self.uav_tab)
+
+        for page in pages:
+>>>>>>> Stashed changes
             scroller = QScrollArea()
             scroller.setWidgetResizable(True)
             scroller.setStyleSheet("QScrollArea { border: none; }")
@@ -325,6 +390,19 @@ class MainWindow(QMainWindow):
             self.client.reseed()
         except Exception:
             pass
+        self._refresh_all()
+
+    def _ingest(self):
+        try:
+            result = self.client.ingest()
+        except Exception as exc:
+            QMessageBox.warning(self, "API ingestion", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "API ingestion",
+            f"Added {result.get('inserted', 0)} protected event(s) from the source API.",
+        )
         self._refresh_all()
 
     def _toggle_simulation(self):

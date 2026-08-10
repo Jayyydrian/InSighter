@@ -8,6 +8,8 @@ Runs locally in under 2 minutes.
 ## What it does
 
 - Generates 1,500 fake user activity logs (5 users, one insider)
+- Protects stored identifiers with keyed hashing and encrypts original event payloads
+- Can append normalized events from a real REST API without replacing synthetic data
 - Runs Isolation Forest anomaly detection on each user's behavior
 - Displays a live risk dashboard with scores, alerts, and charts
 - "Eve" is the simulated insider — she will score HIGH risk
@@ -30,6 +32,7 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 
 - Generates 1,500 fake user activity logs (5 users, one insider)
 - Runs Isolation Forest + One-Class SVM (weighted 0.6/0.4 ensemble) on each user's behavior
+- Builds separate anomaly models for roles with enough staff data, with a global fallback for sparse roles
 - Login + RBAC: `admin` (full access) vs `management` (summary-only), per Chapter 3
 - Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
 - "Eve" is the simulated insider — she will score HIGH risk
@@ -64,6 +67,28 @@ Open `http://localhost:5000` and log in with the same accounts above.
 The database is auto-seeded on first run.
 Use the **↺ Reseed Data** button to regenerate fresh logs anytime.
 
+### Real API ingestion
+
+The backend accepts a JSON REST source configured with environment variables. The response
+may be a list of events or an object containing an `events`, `records`, `data`, or `logs` list.
+Each event should include `user`, `username`, or `email`, plus the activity fields used by the
+detector: `login_hour`, `files_accessed`, `data_transferred_mb`, `failed_logins`, and
+`off_hours_access`. Include `role` or `job_role` so the role-baseline module can compare the
+event with normal behavior for that role.
+
+```powershell
+$env:INSIGHTER_SOURCE_API_URL = "https://your-source.example/api/events"
+$env:INSIGHTER_SOURCE_API_TOKEN = "your-bearer-token"  # optional
+$env:INSIGHTER_SOURCE_PROVIDER = "google_workspace"   # or active_directory / microsoft_365
+python desktop_app/main.py
+```
+
+After signing in as `admin`, call `POST /api/ingest` to fetch and append events. Synthetic
+generation and the live simulation remain available. Stored user identifiers are keyed
+remain readable in administrator profile views, while non-identity event details are encrypted
+with `INSIGHTER_PII_SECRET` (or the application secret fallback). Usernames and email addresses
+are not included in the encrypted payload.
+
 ---
 
 ## Project Structure
@@ -73,6 +98,9 @@ Insighter/
 ├── app.py                     ← Flask backend (Logic + Auth + Data tiers)
 ├── auth.py                    ← BCrypt hashing, RBAC decorators, users/uav_config tables
 ├── generate_logs.py           ← Synthetic log data generator
+├── ingestion.py               ← REST ingestion and protected database writes
+├── privacy.py                 ← PII hashing and payload encryption
+├── database.py                ← SQLCipher connections and database migration
 ├── model.py                   ← Isolation Forest + One-Class SVM ensemble
 ├── requirements.txt
 ├── database.db                ← SQLite DB (auto-created on first run)
@@ -109,7 +137,7 @@ browser-based testing and is not the primary deliverable.
 **Still simplified vs. the full Chapter 3 design** (tracked as remaining work):
 - Session-based auth is used instead of JWT (reasonable for a server-rendered/local desktop
   client; JWT is more suited to the Edge Inference Engine's API-facing needs)
-- SQLite is not yet SQLCipher-encrypted
+- SQLCipher encrypts the database at rest; `INSIGHTER_DB_KEY` should be set in production
 - Log data is synthetic, not yet ingested from real AD / Google Workspace / M365 APIs
 - No Edge Inference Engine (Raspberry Pi 5 / UAV) integration yet
 
