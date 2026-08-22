@@ -28,11 +28,11 @@ class UavConfigTab(QWidget):
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(16)
 
-        title = QLabel("UAV Configuration Module")
+        title = QLabel("Settings")
         title.setObjectName("h1")
         outer.addWidget(title)
         subtitle = QLabel(
-            "Parameters pushed to the Edge Inference Engine (Raspberry Pi 5) prior to deployment."
+            "Detection thresholds and edge-deployment configuration (UAV Configuration Module)."
         )
         subtitle.setObjectName("muted")
         outer.addWidget(subtitle)
@@ -40,7 +40,7 @@ class UavConfigTab(QWidget):
         card = QFrame()
         card.setObjectName("card")
         form = QGridLayout(card)
-        form.setContentsMargins(24, 24, 24, 24)
+        form.setContentsMargins(20, 20, 20, 20)
         form.setVerticalSpacing(14)
         form.setHorizontalSpacing(16)
 

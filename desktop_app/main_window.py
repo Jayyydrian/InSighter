@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QDateTime
 
 from desktop_app.dashboard_tab import DashboardTab
-from desktop_app.profiles_tab import ProfilesTab
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.uav_config_tab import UavConfigTab
 from desktop_app.summary_tab import SummaryTab
@@ -191,8 +190,6 @@ class MainWindow(QMainWindow):
 
         sessions_item = _NavItem("\u25c8", "User Sessions")
         layout.addWidget(sessions_item)
-        profiles_item = _NavItem("\u25c9", "User Profiles")
-        layout.addWidget(profiles_item)
         alerts_item = _NavItem("\u25ce", "Alerts")
         layout.addWidget(alerts_item)
 
@@ -209,12 +206,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_item)
 
         self.overview_badge = QLabel("0")
+        self.overview_badge.setParent(overview_item)
+        self.overview_badge.setFixedHeight(16)
         self.overview_badge.setStyleSheet(
             f"background:{RED}; color:white; font-size:9px; font-weight:700; "
             f"border-radius:8px; padding:1px 6px;"
         )
+        self.overview_badge.adjustSize()
+        self.overview_badge.move(overview_item.width() - self.overview_badge.width() - 10, 6)
+        self.overview_badge.show()
 
-        for item in (overview_item, sessions_item, profiles_item, alerts_item,
+        for item in (overview_item, sessions_item, alerts_item,
                      resources_item, audit_item, integrations_item, settings_item):
             self.nav_group.addButton(item)
 
@@ -235,12 +237,11 @@ class MainWindow(QMainWindow):
         self._nav_pages = {
             overview_item: 0,
             sessions_item: 1,
-            profiles_item: 2,
-            alerts_item: 3,
-            resources_item: 4,
-            audit_item: 5,
-            integrations_item: 6,
-            settings_item: 7,
+            alerts_item: 2,
+            resources_item: 3,
+            audit_item: 4,
+            integrations_item: 5,
+            settings_item: 6,
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -278,15 +279,14 @@ class MainWindow(QMainWindow):
 
         self.dashboard_tab = DashboardTab(self.client)
         self.sessions_tab = SessionsTab(self.client)
-        self.profiles_tab = ProfilesTab(self.client)
         self.alerts_tab = AlertsTab(self.client)
         self.resources_tab = ResourcesTab(self.client)
         self.audit_tab = AuditTab(self.client)
         self.integrations_tab = IntegrationsTab(self.client)
         self.uav_tab = UavConfigTab(self.client)
 
-        pages = (self.dashboard_tab, self.sessions_tab, self.profiles_tab,
-                 self.alerts_tab, self.resources_tab, self.audit_tab,
+        pages = (self.dashboard_tab, self.sessions_tab, self.alerts_tab,
+             self.resources_tab, self.audit_tab,
                  self.integrations_tab, self.uav_tab)
 
         for page in pages:
@@ -337,6 +337,10 @@ class MainWindow(QMainWindow):
         self.sb_users.setText(str(len(users)))
         self.sb_sim.setText(str(self.sim_count))
         self.overview_badge.setText(str(high_count))
+        self.overview_badge.adjustSize()
+        self.overview_badge.move(
+            self.overview_badge.parent().width() - self.overview_badge.width() - 10, 6
+        )
 
     def _reseed(self):
         if self.sim_running:

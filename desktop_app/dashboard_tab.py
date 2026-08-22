@@ -5,7 +5,7 @@ sparklines, and Runtime Resources panel.
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea
 )
 from PyQt6.QtCore import Qt
@@ -23,7 +23,7 @@ SURFACE = "#111827"
 TEXT = "#e2e8f0"
 CRITICAL = "#dc2626"
 
-RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#22c55e"}
+RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#10b981"}
 SEVERITY_COLORS = {"CRITICAL": CRITICAL, "HIGH": RED, "MEDIUM": YELLOW}
 
 # Same fixed identity mapping as the web dashboard's AVATAR_COLORS / USER_ROLES
@@ -115,13 +115,12 @@ class DashboardTab(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(14)
         row1.addWidget(self._build_matrix_panel(), stretch=3)
-        row1.addWidget(self._build_alert_panel(), stretch=2)
+        row1.addWidget(self._build_alert_panel(), stretch=1)
         outer.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.setSpacing(14)
         row2.addWidget(self._build_sparkline_panel(), stretch=1)
-        row2.addWidget(self._build_resources_panel(), stretch=1)
         outer.addLayout(row2)
 
     def _stat_card(self, label_text, sub_text, accent_color):
@@ -178,9 +177,11 @@ class DashboardTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 8):
             self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(4, 92)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.table.setShowGrid(False)
         self.table.setStyleSheet(
             f"QTableWidget {{ border: none; }} "
@@ -251,84 +252,10 @@ class DashboardTab(QWidget):
         h.addWidget(val_label)
         return row, bars_layout, val_label
 
-    def _build_resources_panel(self):
-        panel, layout, meta = _panel("Runtime Resources", YELLOW)
-        self.resources_meta = meta
-
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(0)
-        grid.setVerticalSpacing(0)
-
-        specs = [
-            ("r_pcpu", "Process CPU %", "InSighter process only", True),
-            ("r_ram", "Process RAM", "of total memory", True),
-            ("r_ml", "ML Inference Time", "Isolation Forest per tick", False),
-            ("r_dbr", "DB Read Time", "SQLite fetch per tick", False),
-            ("r_dbw", "DB Write Time", "log injection latency", False),
-            ("r_tick", "Total Tick Time", "end-to-end per event", False),
-            ("r_evts", "Events Processed", "since last reseed", False),
-            ("r_eps", "Throughput", "events / second", False),
-            ("r_threads", "Threads", "Flask worker threads", False),
-            ("r_uptime", "Process Uptime", "since app started", False),
-        ]
-
-        self._res_widgets = {}
-        for i, (key, label_text, sub_text, has_gauge) in enumerate(specs):
-            item = self._res_item(label_text, sub_text, has_gauge)
-            self._res_widgets[key] = item
-            grid.addWidget(item["frame"], i // 2, i % 2)
-
-        wrap = QWidget()
-        wrap.setLayout(grid)
-        layout.addWidget(wrap)
-        return panel
-
-    def _res_item(self, label_text, sub_text, has_gauge):
-        frame = QFrame()
-        frame.setStyleSheet(f"border: none; border-bottom: 1px solid {BORDER};")
-        v = QVBoxLayout(frame)
-        v.setContentsMargins(16, 11, 16, 11)
-        v.setSpacing(4)
-
-        label = QLabel(label_text)
-        label.setStyleSheet(
-            f"color:{MUTED}; font-size:10px; text-transform:uppercase; "
-            f"letter-spacing:0.6px; border:none;"
-        )
-        value = QLabel("-")
-        value.setStyleSheet(f"color:{TEXT}; font-size:16px; font-weight:700; font-family:Consolas,monospace; border:none;")
-        sub = QLabel(sub_text)
-        sub.setStyleSheet(f"color:{MUTED}; font-size:10px; border:none;")
-
-        v.addWidget(label)
-        v.addWidget(value)
-        v.addWidget(sub)
-
-        gauge_fill = None
-        if has_gauge:
-            track = QFrame()
-            track.setFixedHeight(5)
-            track.setStyleSheet(f"background:{BORDER2}; border-radius:3px; border:none;")
-            track_layout = QHBoxLayout(track)
-            track_layout.setContentsMargins(0, 0, 0, 0)
-            track_layout.setSpacing(0)
-            fill = QFrame()
-            fill.setFixedHeight(5)
-            fill.setStyleSheet(f"background:{ACCENT}; border-radius:3px; border:none;")
-            track_layout.addWidget(fill)
-            track_layout.addStretch()
-            v.addWidget(track)
-            gauge_fill = fill
-            gauge_fill._track = track
-
-        return {"frame": frame, "value": value, "sub": sub, "gauge": gauge_fill}
-
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
         self._refresh_scores()
         self._refresh_alerts()
-        self._refresh_resources()
 
     def reset_history(self):
         self.history = {u: [] for u in USER_ORDER}
@@ -385,6 +312,7 @@ class DashboardTab(QWidget):
 
     def _user_cell(self, username):
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(10, 4, 10, 4)
         h.setSpacing(9)
@@ -414,6 +342,7 @@ class DashboardTab(QWidget):
 
     def _score_bar_cell(self, score):
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
         h.setSpacing(8)
@@ -442,6 +371,7 @@ class DashboardTab(QWidget):
 
     def _badge_cell(self, level):
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
         color = RISK_COLORS.get(level, TEXT)
@@ -468,8 +398,9 @@ class DashboardTab(QWidget):
             for v in hist:
                 h = round((v / max_v) * 28) + 2
                 bar = QFrame()
-                bar.setFixedWidth(6)
                 bar.setFixedHeight(h)
+                bar.setMinimumWidth(3)
+                bar.setSizePolicy(bar.sizePolicy().Policy.Expanding, bar.sizePolicy().Policy.Fixed)
                 bar.setStyleSheet(f"background:{score_color(v)}; border-radius:2px;")
                 bars_layout.addWidget(bar, alignment=Qt.AlignmentFlag.AlignBottom)
             bars_layout.addStretch()
@@ -534,52 +465,10 @@ class DashboardTab(QWidget):
 
         badge = QLabel(a["severity"])
         badge.setStyleSheet(
-            f"color:{color}; border:1px solid {color}; border-radius:4px; "
+            f"color:{color}; background:rgba(239,68,68,30); border:1px solid {color}; border-radius:4px; "
             f"padding:2px 8px; font-size:10px; font-weight:700;"
         )
         h.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
 
         return row
 
-    def _refresh_resources(self):
-        try:
-            d = self.client.get_resources()
-        except Exception:
-            return
-
-        r = self._res_widgets
-
-        pcpu = d.get("proc_cpu", 0)
-        r["r_pcpu"]["value"].setText(f"{pcpu}%")
-        r["r_pcpu"]["sub"].setText(f"raw: {d.get('proc_cpu_raw', 0)}% across all cores")
-        self._set_gauge(r["r_pcpu"]["gauge"], pcpu)
-
-        ram_pct = d.get("ram_percent", 0)
-        r["r_ram"]["value"].setText(f"{d.get('ram_used_mb', 0)} MB")
-        r["r_ram"]["sub"].setText(f"{ram_pct}% of total")
-        self._set_gauge(r["r_ram"]["gauge"], ram_pct)
-
-        def fmt_ms(ms):
-            return f"{ms:.1f} ms" if ms and ms > 0 else "-"
-
-        r["r_ml"]["value"].setText(fmt_ms(d.get("ml_inference_ms", 0)))
-        r["r_dbr"]["value"].setText(fmt_ms(d.get("db_read_ms", 0)))
-        r["r_dbw"]["value"].setText(fmt_ms(d.get("db_write_ms", 0)))
-        r["r_tick"]["value"].setText(fmt_ms(d.get("last_tick_ms", 0)))
-
-        events = d.get("events_total", 0)
-        eps = d.get("events_per_sec", 0)
-        r["r_evts"]["value"].setText(str(events) if events > 0 else "-")
-        r["r_eps"]["value"].setText(f"{eps}/s" if eps and eps > 0 else "-")
-        r["r_threads"]["value"].setText(str(d.get("threads", "-")))
-        r["r_uptime"]["value"].setText(fmt_uptime(d.get("uptime_s", 0)))
-
-        self.resources_meta.setText("live")
-
-    def _set_gauge(self, fill_widget, value):
-        if fill_widget is None:
-            return
-        track_width = fill_widget._track.width() or 200
-        w = max(0, min(track_width, round(track_width * min(value, 100) / 100)))
-        fill_widget.setFixedWidth(w)
-        fill_widget.setStyleSheet(f"background:{gauge_color(value)}; border-radius:3px; border:none;")

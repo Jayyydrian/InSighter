@@ -2,6 +2,7 @@ BG = "#0a0e1a"
 SURFACE = "#111827"
 SURFACE2 = "#1a2235"
 BORDER = "#1e2d45"
+BORDER2 = "#253550"
 TEXT = "#e2e8f0"
 MUTED = "#64748b"
 MUTED2 = "#94a3b8"
@@ -10,12 +11,13 @@ ACCENT2 = "#1d4ed8"
 RED = "#ef4444"
 YELLOW = "#f59e0b"
 GREEN = "#22c55e"
+MONO = "'JetBrains Mono', 'Consolas', monospace"
 
 QSS = f"""
 QWidget {{
     background: {BG};
     color: {TEXT};
-    font-family: 'Segoe UI', 'Inter', sans-serif;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
     font-size: 13px;
 }}
 
@@ -51,7 +53,7 @@ QTabBar::tab:hover:!selected {{
 QFrame#card {{
     background: {SURFACE};
     border: 1px solid {BORDER};
-    border-radius: 10px;
+    border-radius: 8px;
 }}
 
 /* ── Tables ───────────────────────────────────────────────────────── */
@@ -62,11 +64,12 @@ QTableWidget {{
     gridline-color: {BORDER};
     selection-background-color: {SURFACE2};
     selection-color: {TEXT};
+    alternate-background-color: {SURFACE};
 }}
 QHeaderView::section {{
-    background: {SURFACE2};
-    color: {MUTED2};
-    padding: 8px;
+    background: {BG};
+    color: {MUTED};
+    padding: 9px 12px;
     border: none;
     border-bottom: 1px solid {BORDER};
     font-size: 11px;
@@ -74,6 +77,7 @@ QHeaderView::section {{
     text-transform: uppercase;
 }}
 QTableWidget::item {{
+    background: {SURFACE};
     padding: 6px;
     border-bottom: 1px solid {BORDER};
 }}
@@ -112,23 +116,25 @@ QCheckBox {{
 /* ── Buttons ──────────────────────────────────────────────────────── */
 QPushButton {{
     background: {SURFACE2};
-    color: {TEXT};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    padding: 8px 16px;
+    color: {MUTED2};
+    border: 1px solid {BORDER2};
+    border-radius: 5px;
+    padding: 5px 12px;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
 }}
 QPushButton:hover {{
+    background: {BORDER2};
     border-color: {ACCENT};
+    color: {TEXT};
 }}
 QPushButton#primary {{
-    background: {ACCENT};
-    border: none;
+    background: {ACCENT2};
+    border: 1px solid {ACCENT};
     color: white;
 }}
 QPushButton#primary:hover {{
-    background: {ACCENT2};
+    background: {ACCENT};
 }}
 QPushButton#danger {{
     background: transparent;
@@ -157,13 +163,17 @@ QLabel#muted {{
     font-size: 12px;
 }}
 QLabel#error {{
+    background: rgba(239, 68, 68, 25);
+    border: 1px solid {RED};
+    border-radius: 6px;
     color: {RED};
     font-size: 12px;
+    padding: 8px 10px;
 }}
 QLabel#metricValue {{
     font-size: 30px;
     font-weight: 700;
-    font-family: 'Consolas', monospace;
+    font-family: {MONO};
 }}
 
 /* ── Sidebar nav items (mirrors web dashboard's .nav-item) ──────────── */

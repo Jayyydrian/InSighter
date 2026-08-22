@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
 
-STATUS_COLORS = {"not_connected": "#64748b", "connected": "#22c55e"}
+STATUS_COLORS = {"not_connected": "#94a3b8", "connected": "#6ee7b7"}
 
 
 class IntegrationsTab(QWidget):
@@ -62,7 +62,7 @@ class IntegrationsTab(QWidget):
             color = STATUS_COLORS.get(integ["status"], "#64748b")
             pill = QLabel(integ["status"].replace("_", " ").upper())
             pill.setStyleSheet(
-                f"color:{color}; border:1px solid {color}; border-radius:10px; "
+                f"color:{color}; background:rgba(100,116,139,35); border:1px solid {color}; border-radius:10px; "
                 f"padding:4px 12px; font-size:10px; font-weight:700;"
             )
             row_layout.addWidget(pill)

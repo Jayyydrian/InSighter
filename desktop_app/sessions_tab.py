@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QHeaderView
+    QTableWidgetItem, QHeaderView, QFrame
 )
 from PyQt6.QtCore import Qt
 
@@ -18,19 +18,27 @@ class SessionsTab(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        header = QHBoxLayout()
         title = QLabel("User Sessions")
         title.setObjectName("h1")
-        header.addWidget(title)
-        header.addStretch()
-        self.count_label = QLabel("")
-        self.count_label.setObjectName("muted")
-        header.addWidget(self.count_label)
-        layout.addLayout(header)
+        layout.addWidget(title)
 
         subtitle = QLabel("Raw session/log entries as ingested, most recent first.")
         subtitle.setObjectName("muted")
         layout.addWidget(subtitle)
+
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        panel_header = QHBoxLayout()
+        panel_header.setContentsMargins(16, 12, 16, 12)
+        panel_header.addWidget(QLabel("●"))
+        panel_header.addWidget(QLabel("Session Log"))
+        panel_header.addStretch()
+        self.count_label = QLabel("—")
+        self.count_label.setObjectName("muted")
+        panel_header.addWidget(self.count_label)
+        card_layout.addLayout(panel_header)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
@@ -40,7 +48,9 @@ class SessionsTab(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self.table)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        card_layout.addWidget(self.table)
+        layout.addWidget(card)
 
     def refresh(self):
         try:

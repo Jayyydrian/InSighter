@@ -13,7 +13,7 @@ class LoginWindow(QWidget):
         super().__init__()
         self.client = ApiClient()
         self.setWindowTitle("InSighter · Sign In")
-        self.setFixedSize(380, 420)
+        self.setFixedSize(420, 480)
         self._build_ui()
 
     def _build_ui(self):
@@ -23,14 +23,14 @@ class LoginWindow(QWidget):
 
         card = QFrame()
         card.setObjectName("card")
-        card.setFixedWidth(320)
+        card.setFixedWidth(340)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(28, 28, 28, 28)
+        card_layout.setContentsMargins(32, 32, 32, 32)
         card_layout.setSpacing(4)
 
         logo_row = QHBoxLayout()
         dot = QLabel("●")
-        dot.setStyleSheet("color:#3b82f6; font-size:14px;")
+        dot.setStyleSheet("color:#3b82f6; font-size:10px;")
         title = QLabel("InSighter")
         title.setObjectName("h1")
         logo_row.addWidget(dot)
@@ -41,7 +41,7 @@ class LoginWindow(QWidget):
         subtitle = QLabel("Insider Threat Monitoring · Sign in to continue")
         subtitle.setObjectName("muted")
         card_layout.addWidget(subtitle)
-        card_layout.addSpacing(18)
+        card_layout.addSpacing(4)
 
         card_layout.addWidget(self._field_label("Username"))
         self.username_input = QLineEdit()
@@ -55,7 +55,7 @@ class LoginWindow(QWidget):
         self.password_input.returnPressed.connect(self._attempt_login)
         card_layout.addWidget(self.password_input)
 
-        card_layout.addSpacing(16)
+        card_layout.addSpacing(6)
         self.login_btn = QPushButton("Sign In")
         self.login_btn.setObjectName("primary")
         self.login_btn.clicked.connect(self._attempt_login)
@@ -66,12 +66,13 @@ class LoginWindow(QWidget):
         self.error_label.setWordWrap(True)
         card_layout.addWidget(self.error_label)
 
-        card_layout.addSpacing(14)
+        card_layout.addSpacing(6)
         hint = QLabel(
             "Demo accounts:\nadmin / admin123  (full access)\n"
             "manager / manager123  (summary-only)"
         )
         hint.setObjectName("muted")
+        hint.setStyleSheet("border-top:1px solid #1e2d45; padding-top:14px; line-height:1.6;")
         card_layout.addWidget(hint)
 
         center_row = QHBoxLayout()
