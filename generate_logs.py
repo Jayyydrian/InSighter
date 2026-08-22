@@ -1,8 +1,10 @@
-import sqlite3
 import random
 
+from database import connect
+from privacy import sanitize_event
+
 def generate():
-    conn = sqlite3.connect("database.db")
+    conn = connect()
     conn.execute("DROP TABLE IF EXISTS logs")
     conn.execute("""
         CREATE TABLE logs (
@@ -12,7 +14,11 @@ def generate():
             files_accessed INTEGER,
             data_transferred_mb REAL,
             failed_logins INTEGER,
-            off_hours_access INTEGER
+            off_hours_access INTEGER,
+            role TEXT DEFAULT 'unknown',
+            source TEXT DEFAULT 'synthetic',
+            payload_encrypted TEXT DEFAULT '',
+            ingested_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -21,8 +27,10 @@ def generate():
         "bob":     {"normal": True},
         "charlie": {"normal": True},
         "diana":   {"normal": True},
-        "eve":     {"normal": False},  # insider threat
+        "eve":     {"normal": False, "role": "finance analyst"},  # insider threat
     }
+    for user in ("alice", "bob", "charlie", "diana"):
+        users[user]["role"] = "developer" if user == "charlie" else "staff"
 
     random.seed(42)
     for _ in range(300):
@@ -45,9 +53,21 @@ def generate():
                     random.randint(4, 10),
                     1
                 )
+            event = dict(zip(
+                ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
+                row,
+            ))
+            event["role"] = props["role"]
+            protected = sanitize_event(event, source="synthetic")
             conn.execute(
-                "INSERT INTO logs (user, login_hour, files_accessed, data_transferred_mb, failed_logins, off_hours_access) VALUES (?,?,?,?,?,?)",
-                row
+                """INSERT INTO logs
+                (user, login_hour, files_accessed, data_transferred_mb,
+                 failed_logins, off_hours_access, role, source, payload_encrypted)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                tuple(protected[key] for key in (
+                    "user", "login_hour", "files_accessed", "data_transferred_mb",
+                    "failed_logins", "off_hours_access", "role", "source", "payload_encrypted",
+                )),
             )
 
     conn.commit()

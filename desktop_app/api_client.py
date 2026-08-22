@@ -67,6 +67,9 @@ class ApiClient:
     def get_integrations(self):
         return self._get("/api/integrations")
 
+    def ingest_events(self):
+        return self._post("/api/ingest")
+
     def save_uav_config(self, payload):
         resp = self.session.post(f"{BASE_URL}/api/uav-config", json=payload)
         if resp.status_code != 200:
@@ -88,4 +91,18 @@ class ApiClient:
             raise ApiError(403, "Access restricted to administrator accounts.")
         if resp.status_code != 200:
             raise ApiError(resp.status_code, f"Request to {path} failed.")
+        return resp.json()
+
+    def _post(self, path, payload=None):
+        resp = self.session.post(f"{BASE_URL}{path}", json=payload)
+        if resp.status_code == 401:
+            raise ApiError(401, "Session expired. Please log in again.")
+        if resp.status_code == 403:
+            raise ApiError(403, "Access restricted to administrator accounts.")
+        if resp.status_code != 200:
+            try:
+                message = resp.json().get("error", f"Request to {path} failed.")
+            except ValueError:
+                message = f"Request to {path} failed."
+            raise ApiError(resp.status_code, message)
         return resp.json()

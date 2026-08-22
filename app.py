@@ -2,16 +2,24 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, s
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
 from auth import init_users_table, verify_login, login_required, admin_required, log_action
-import psutil, time, os, threading, secrets
-import sqlite3 as _sqlite3
+from ingestion import ensure_logs_schema, ingest_from_api
+from database import Row, connect, ensure_database
+import psutil, time, os, threading, secrets, requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
 
-if not os.path.exists("database.db"):
+ensure_database()
+startup_conn = connect()
+has_logs = startup_conn.execute(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='logs'"
+).fetchone()
+startup_conn.close()
+if not has_logs:
     generate()
 
 init_users_table()  # creates `users` table + seeds admin/manager accounts if missing
+ensure_logs_schema()
 
 # ── Process-level resource tracker ──────────────────────────────────────────
 _proc = psutil.Process(os.getpid())
@@ -104,8 +112,8 @@ def alerts():
 @admin_required
 def sessions():
     """Raw session/log rows for the User Sessions page (most recent first)."""
-    conn = _sqlite3.connect("database.db")
-    conn.row_factory = _sqlite3.Row
+    conn = connect()
+    conn.row_factory = Row
     rows = conn.execute(
         "SELECT * FROM logs ORDER BY id DESC LIMIT 150"
     ).fetchall()
@@ -133,8 +141,8 @@ def simulate():
 
     # DB read + ML inference
     t1 = time.perf_counter()
-    import sqlite3, pandas as pd
-    conn = sqlite3.connect("database.db")
+    import pandas as pd
+    conn = connect()
     df = pd.read_sql("SELECT * FROM logs", conn)
     conn.close()
     db_read_ms = (time.perf_counter() - t1) * 1000
@@ -172,7 +180,7 @@ def summary_counts():
 @app.route("/api/uav-config", methods=["GET"])
 @admin_required
 def get_uav_config():
-    conn = _sqlite3.connect("database.db")
+    conn = connect()
     row = conn.execute("""
         SELECT threshold_high, threshold_medium, log_targets,
                sync_interval_minutes, drone_operator_username, updated_at
@@ -187,7 +195,7 @@ def get_uav_config():
 @admin_required
 def update_uav_config():
     data = request.get_json(force=True)
-    conn = _sqlite3.connect("database.db")
+    conn = connect()
     conn.execute("""
         UPDATE uav_config SET
             threshold_high = ?,
@@ -220,8 +228,8 @@ def audit_log():
     who accessed or changed what, for Data Privacy Act accountability.
     Available to both roles (admin + management), per the design spec.
     """
-    conn = _sqlite3.connect("database.db")
-    conn.row_factory = _sqlite3.Row
+    conn = connect()
+    conn.row_factory = Row
     rows = conn.execute(
         "SELECT username, action, detail, timestamp FROM audit_log ORDER BY id DESC LIMIT 100"
     ).fetchall()
@@ -237,14 +245,42 @@ def integrations():
     Honestly reflects current dev state: synthetic data only, no live
     API connection has been implemented yet.
     """
+    configured = bool(os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip())
+    provider = os.environ.get("INSIGHTER_SOURCE_PROVIDER", "").strip().lower()
+    supported = {"active_directory", "google_workspace", "microsoft_365"}
     return jsonify([
-        {"name": "Active Directory",  "key": "active_directory",  "status": "not_connected",
-         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
-        {"name": "Google Workspace",  "key": "google_workspace",  "status": "not_connected",
-         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
-        {"name": "Microsoft 365",     "key": "microsoft_365",     "status": "not_connected",
-         "note": "Log ingestion not yet implemented — currently running on synthetic data."},
+        {
+            "name": name,
+            "key": key,
+            "status": "connected" if configured and provider == key else "not_connected",
+            "note": (
+                "REST connector configured; use Ingest Events to append protected events."
+                if configured and provider == key
+                else (
+                    "Set INSIGHTER_SOURCE_PROVIDER to this source to connect it."
+                    if configured and provider in supported
+                    else "API connection not configured — currently running on synthetic data."
+                )
+            ),
+        }
+        for name, key in (
+            ("Active Directory", "active_directory"),
+            ("Google Workspace", "google_workspace"),
+            ("Microsoft 365", "microsoft_365"),
+        )
     ])
+
+
+@app.route("/api/ingest", methods=["POST"])
+@admin_required
+def ingest():
+    try:
+        inserted = ingest_from_api()
+    except (ValueError, requests.RequestException) as exc:
+        log_action(session.get("username"), "INGEST_FAILED", str(exc))
+        return jsonify({"error": str(exc)}), 400
+    log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
+    return jsonify({"status": "ok", "inserted": inserted})
 
 
 @app.route("/api/resources")

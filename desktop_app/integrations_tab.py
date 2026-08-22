@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton
 
 STATUS_COLORS = {"not_connected": "#94a3b8", "connected": "#6ee7b7"}
 
@@ -22,6 +22,17 @@ class IntegrationsTab(QWidget):
         subtitle = QLabel("Status of the three supported log-ingestion data sources.")
         subtitle.setObjectName("muted")
         outer.addWidget(subtitle)
+
+        action_row = QHBoxLayout()
+        self.ingest_btn = QPushButton("Ingest Events")
+        self.ingest_btn.setObjectName("primary")
+        self.ingest_btn.clicked.connect(self._ingest)
+        action_row.addWidget(self.ingest_btn)
+        self.ingest_status = QLabel("")
+        self.ingest_status.setObjectName("muted")
+        action_row.addWidget(self.ingest_status)
+        action_row.addStretch()
+        outer.addLayout(action_row)
 
         self.card = QFrame()
         self.card.setObjectName("card")
@@ -68,3 +79,15 @@ class IntegrationsTab(QWidget):
             row_layout.addWidget(pill)
 
             self.card_layout.addWidget(row)
+
+    def _ingest(self):
+        self.ingest_btn.setEnabled(False)
+        self.ingest_status.setText("Fetching events...")
+        try:
+            result = self.client.ingest_events()
+            self.ingest_status.setText(f"Inserted {result.get('inserted', 0)} events.")
+            self.refresh()
+        except Exception as exc:
+            self.ingest_status.setText(str(exc))
+        finally:
+            self.ingest_btn.setEnabled(True)

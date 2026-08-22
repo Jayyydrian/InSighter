@@ -2,9 +2,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QButtonGroup, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QObject, QThread, pyqtSignal
 
 from desktop_app.dashboard_tab import DashboardTab
+from desktop_app.profiles_tab import ProfilesTab
+from desktop_app.role_sessions_tab import RoleSessionsTab
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.uav_config_tab import UavConfigTab
 from desktop_app.summary_tab import SummaryTab
@@ -41,12 +43,29 @@ class _NavItem(QPushButton):
         self.badge = None
 
 
+class _SimulationWorker(QObject):
+    finished = pyqtSignal(bool)
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+
+    def run(self):
+        try:
+            self.client.simulate()
+        except Exception:
+            self.finished.emit(False)
+        else:
+            self.finished.emit(True)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, client, on_logout):
         super().__init__()
         self.client = client
         self.on_logout = on_logout
         self.sim_running = False
+        self.sim_busy = False
         self.sim_count = 0
         self.setWindowTitle("InSighter -- Insider Threat Monitoring Console")
         self.resize(1280, 820)
@@ -190,6 +209,10 @@ class MainWindow(QMainWindow):
 
         sessions_item = _NavItem("\u25c8", "User Sessions")
         layout.addWidget(sessions_item)
+        profiles_item = _NavItem("\u25c9", "User Profiles")
+        layout.addWidget(profiles_item)
+        role_item = _NavItem("\u25c7", "Role Behavior")
+        layout.addWidget(role_item)
         alerts_item = _NavItem("\u25ce", "Alerts")
         layout.addWidget(alerts_item)
 
@@ -216,7 +239,7 @@ class MainWindow(QMainWindow):
         self.overview_badge.move(overview_item.width() - self.overview_badge.width() - 10, 6)
         self.overview_badge.show()
 
-        for item in (overview_item, sessions_item, alerts_item,
+        for item in (overview_item, sessions_item, profiles_item, role_item, alerts_item,
                      resources_item, audit_item, integrations_item, settings_item):
             self.nav_group.addButton(item)
 
@@ -237,11 +260,13 @@ class MainWindow(QMainWindow):
         self._nav_pages = {
             overview_item: 0,
             sessions_item: 1,
-            alerts_item: 2,
-            resources_item: 3,
-            audit_item: 4,
-            integrations_item: 5,
-            settings_item: 6,
+            profiles_item: 2,
+            role_item: 3,
+            alerts_item: 4,
+            resources_item: 5,
+            audit_item: 6,
+            integrations_item: 7,
+            settings_item: 8,
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -279,13 +304,15 @@ class MainWindow(QMainWindow):
 
         self.dashboard_tab = DashboardTab(self.client)
         self.sessions_tab = SessionsTab(self.client)
+        self.profiles_tab = ProfilesTab(self.client)
+        self.role_sessions_tab = RoleSessionsTab(self.client)
         self.alerts_tab = AlertsTab(self.client)
         self.resources_tab = ResourcesTab(self.client)
         self.audit_tab = AuditTab(self.client)
         self.integrations_tab = IntegrationsTab(self.client)
         self.uav_tab = UavConfigTab(self.client)
 
-        pages = (self.dashboard_tab, self.sessions_tab, self.alerts_tab,
+        pages = (self.dashboard_tab, self.sessions_tab, self.profiles_tab, self.role_sessions_tab, self.alerts_tab,
              self.resources_tab, self.audit_tab,
                  self.integrations_tab, self.uav_tab)
 
@@ -313,16 +340,26 @@ class MainWindow(QMainWindow):
 
     # -- Behavior ----------------------------------------------------------
     def _go_to(self, nav_item):
-        self.stack.setCurrentIndex(self._nav_pages[nav_item])
+        index = self._nav_pages[nav_item]
+        self.stack.setCurrentIndex(index)
+        self._refresh_active()
 
     def _tick_clock(self):
         self.clock_label.setText(QDateTime.currentDateTime().toString("HH:mm:ss"))
 
     def _refresh_all(self):
-        for tab in self.tab_refs:
-            tab.refresh()
+        if self.sim_busy:
+            return
+        self._refresh_active()
         if self.client.role == "admin":
             self._update_sidebar_stats()
+
+    def _refresh_active(self):
+        if self.sim_busy:
+            return
+        index = self.stack.currentIndex()
+        if 0 <= index < len(self.tab_refs):
+            self.tab_refs[index].refresh()
 
     def _update_sidebar_stats(self):
         users = getattr(self.dashboard_tab, "last_users", [])
@@ -364,12 +401,29 @@ class MainWindow(QMainWindow):
             self.sim_timer.stop()
 
     def _sim_tick(self):
-        try:
-            self.client.simulate()
-        except Exception:
+        if self.sim_busy:
             return
-        self.sim_count += 1
+        self.sim_busy = True
+        self.sim_thread = QThread(self)
+        self.sim_worker = _SimulationWorker(self.client)
+        self.sim_worker.moveToThread(self.sim_thread)
+        self.sim_thread.started.connect(self.sim_worker.run)
+        self.sim_worker.finished.connect(self._simulation_finished)
+        self.sim_worker.finished.connect(self.sim_thread.quit)
+        self.sim_worker.finished.connect(self.sim_worker.deleteLater)
+        self.sim_thread.finished.connect(self.sim_thread.deleteLater)
+        self.sim_thread.finished.connect(self._simulation_thread_finished)
+        self.sim_thread.start()
+
+    def _simulation_finished(self, succeeded):
+        if succeeded:
+            self.sim_count += 1
+        self.sim_busy = False
         self._refresh_all()
+
+    def _simulation_thread_finished(self):
+        self.sim_thread = None
+        self.sim_worker = None
 
     def _logout(self):
         self.timer.stop()

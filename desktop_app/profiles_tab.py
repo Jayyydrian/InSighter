@@ -133,8 +133,9 @@ class ProfilesTab(QWidget):
         self.detail_layout.addLayout(header)
 
         subtitle = QLabel(
-            f"Ensemble breakdown — Isolation Forest: {u['if_score']} · "
-            f"One-Class SVM: {u['ocsvm_score']}"
+            f"Role: {u.get('role', 'unknown').title()} · "
+            f"Isolation Forest: {u['if_score']} · One-Class SVM: {u['ocsvm_score']} · "
+            f"Role baseline deviation: {u.get('role_baseline_score', 0)}"
         )
         subtitle.setObjectName("muted")
         self.detail_layout.addWidget(subtitle)

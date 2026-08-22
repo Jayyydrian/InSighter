@@ -40,9 +40,9 @@ class SessionsTab(QWidget):
         panel_header.addWidget(self.count_label)
         card_layout.addLayout(panel_header)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "User", "Login Hour", "Files", "Transfer (MB)", "Failed Logins", "Off-Hours"]
+            ["ID", "User", "Role", "Source", "Login Hour", "Files", "Transfer (MB)", "Failed Logins", "Off-Hours"]
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
@@ -62,7 +62,8 @@ class SessionsTab(QWidget):
         self.table.setRowCount(len(sessions))
         for row, s in enumerate(sessions):
             values = [
-                str(s["id"]), s["user"], f'{s["login_hour"]}:00',
+                str(s["id"]), s["user"], s.get("role", "unknown"), s.get("source", "synthetic"),
+                f'{s["login_hour"]}:00',
                 str(s["files_accessed"]), f'{s["data_transferred_mb"]}',
                 str(s["failed_logins"]), "Yes" if s["off_hours_access"] else "No",
             ]
