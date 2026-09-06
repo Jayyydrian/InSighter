@@ -14,6 +14,7 @@ from desktop_app.sessions_tab import SessionsTab
 from desktop_app.resources_tab import ResourcesTab
 from desktop_app.audit_tab import AuditTab
 from desktop_app.integrations_tab import IntegrationsTab
+from desktop_app.compliance_tab import ComplianceTab
 
 REFRESH_INTERVAL_MS = 5000
 SIM_INTERVAL_MS = 3000
@@ -102,6 +103,9 @@ class MainWindow(QMainWindow):
         if self.client.role == "admin":
             body.addWidget(self._build_sidebar_admin())
             body.addWidget(self._build_content_admin(), stretch=1)
+        elif self.client.role == "compliance":
+            body.addWidget(self._build_sidebar_compliance())
+            body.addWidget(self._build_content_compliance(), stretch=1)
         else:
             body.addWidget(self._build_sidebar_management())
             body.addWidget(self._build_content_management(), stretch=1)
@@ -282,6 +286,15 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return sb
 
+    def _build_sidebar_compliance(self):
+        sb, layout = self._sidebar_frame()
+        self._nav_section(layout, "Compliance")
+        item = _NavItem("\u25eb", "Compliance Audit")
+        item.setChecked(True)
+        layout.addWidget(item)
+        layout.addStretch()
+        return sb
+
     def _sidebar_stat(self, layout, label_text, color=TEXT):
         row = QHBoxLayout()
         row.setContentsMargins(8, 4, 8, 4)
@@ -338,6 +351,14 @@ class MainWindow(QMainWindow):
         self.tab_refs = [self.summary_tab]
         return wrap
 
+    def _build_content_compliance(self):
+        wrap = QFrame()
+        outer = QVBoxLayout(wrap)
+        outer.setContentsMargins(18, 18, 18, 18)
+        self.compliance_tab = ComplianceTab(self.client)
+        outer.addWidget(self.compliance_tab)
+        return wrap
+
     # -- Behavior ----------------------------------------------------------
     def _go_to(self, nav_item):
         index = self._nav_pages[nav_item]
@@ -356,6 +377,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_active(self):
         if self.sim_busy:
+            return
+        if self.client.role == "management":
+            self.summary_tab.refresh()
+            return
+        if self.client.role == "compliance":
+            self.compliance_tab.refresh()
             return
         index = self.stack.currentIndex()
         if 0 <= index < len(self.tab_refs):

@@ -49,6 +49,9 @@ class ApiClient:
     def get_alerts(self):
         return self._get("/api/alerts")
 
+    def get_compliance_alerts(self):
+        return self._get("/api/compliance/alerts")
+
     def get_resources(self):
         return self._get("/api/resources")
 
@@ -63,6 +66,9 @@ class ApiClient:
 
     def get_audit_log(self):
         return self._get("/api/audit-log")
+
+    def get_compliance_audit_log(self):
+        return self._get("/api/compliance/audit-log")
 
     def get_integrations(self):
         return self._get("/api/integrations")

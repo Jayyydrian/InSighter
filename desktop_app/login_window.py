@@ -69,7 +69,8 @@ class LoginWindow(QWidget):
         card_layout.addSpacing(6)
         hint = QLabel(
             "Demo accounts:\nadmin / admin123  (full access)\n"
-            "manager / manager123  (summary-only)"
+            "manager / manager123  (summary-only)\n"
+            "hr_officer / hr_officer123  (compliance)"
         )
         hint.setObjectName("muted")
         hint.setStyleSheet("border-top:1px solid #1e2d45; padding-top:14px; line-height:1.6;")

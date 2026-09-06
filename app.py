@@ -1,9 +1,23 @@
+import re
+
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from auth import init_users_table, verify_login, login_required, admin_required, log_action
-from ingestion import ensure_logs_schema, ingest_from_api
+from auth import (
+    admin_required,
+    compliance_required,
+    init_users_table,
+    login_required,
+    log_action,
+    verify_login,
+)
+from ingestion import (
+    active_directory_status,
+    ensure_logs_schema,
+    ingest_from_configured_source,
+)
 from database import Row, connect, ensure_database
+from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 
 app = Flask(__name__)
@@ -107,6 +121,16 @@ def scores():
 @admin_required
 def alerts():
     return jsonify(get_recent_alerts())
+
+
+@app.route("/api/compliance/alerts")
+@compliance_required
+def compliance_alerts():
+    """Return flagged incidents with stable pseudonymous user identifiers."""
+    return jsonify([
+        {**alert, "user": hash_identifier(alert["user"])}
+        for alert in get_recent_alerts()
+    ])
 
 @app.route("/api/sessions")
 @admin_required
@@ -221,12 +245,12 @@ def update_uav_config():
 
 
 @app.route("/api/audit-log")
-@login_required
+@admin_required
 def audit_log():
     """
     Chapter 3's Privacy-Compliant Audit Mode: controlled visibility into
     who accessed or changed what, for Data Privacy Act accountability.
-    Available to both roles (admin + management), per the design spec.
+    Available to administrators with real usernames.
     """
     conn = connect()
     conn.row_factory = Row
@@ -237,6 +261,42 @@ def audit_log():
     return jsonify([dict(r) for r in rows])
 
 
+@app.route("/api/compliance/audit-log")
+@compliance_required
+def compliance_audit_log():
+    """Return the audit trail with every available username pseudonymized."""
+    conn = connect()
+    conn.row_factory = Row
+    rows = conn.execute(
+        "SELECT username, action, detail, timestamp FROM audit_log ORDER BY id DESC"
+    ).fetchall()
+    usernames = [row[0] for row in conn.execute(
+        """SELECT username FROM users
+           UNION
+           SELECT user FROM logs"""
+    ).fetchall()]
+    conn.close()
+
+    def pseudonymize_detail(detail):
+        for username in sorted((name for name in usernames if name), key=len, reverse=True):
+            detail = re.sub(
+                rf"(?<!\w){re.escape(username)}(?!\w)",
+                hash_identifier(username),
+                detail,
+                flags=re.IGNORECASE,
+            )
+        return detail
+
+    return jsonify([
+        {
+            **dict(row),
+            "username": hash_identifier(row["username"]) if row["username"] else None,
+            "detail": pseudonymize_detail(row["detail"] or ""),
+        }
+        for row in rows
+    ])
+
+
 @app.route("/api/integrations")
 @login_required
 def integrations():
@@ -245,16 +305,23 @@ def integrations():
     Honestly reflects current dev state: synthetic data only, no live
     API connection has been implemented yet.
     """
-    configured = bool(os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip())
     provider = os.environ.get("INSIGHTER_SOURCE_PROVIDER", "").strip().lower()
+    configured = bool(os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip())
     supported = {"active_directory", "google_workspace", "microsoft_365"}
+    ad_status, ad_note = active_directory_status()
     return jsonify([
         {
             "name": name,
             "key": key,
-            "status": "connected" if configured and provider == key else "not_connected",
+            "status": ad_status if key == "active_directory" else (
+                "connected"
+                if os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip() and provider == key
+                else "not_connected"
+            ),
             "note": (
-                "REST connector configured; use Ingest Events to append protected events."
+                ad_note
+                if key == "active_directory"
+                else "REST connector configured; use Ingest Events to append protected events."
                 if configured and provider == key
                 else (
                     "Set INSIGHTER_SOURCE_PROVIDER to this source to connect it."
@@ -275,8 +342,8 @@ def integrations():
 @admin_required
 def ingest():
     try:
-        inserted = ingest_from_api()
-    except (ValueError, requests.RequestException) as exc:
+        inserted = ingest_from_configured_source()
+    except (ValueError, requests.RequestException, RuntimeError, OSError) as exc:
         log_action(session.get("username"), "INGEST_FAILED", str(exc))
         return jsonify({"error": str(exc)}), 400
     log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")

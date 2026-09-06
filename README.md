@@ -34,7 +34,7 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 - Accepts protected events from a configured REST API through the desktop Integrations page
 - Hashes identifiers and encrypts non-identity event payloads before storage
 - Uses SQLCipher encryption automatically when `sqlcipher3` is installed, with SQLite fallback for development
-- Login + RBAC: `admin` (full access) vs `management` (summary-only), per Chapter 3
+- Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
 - Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
 - "Eve" is the simulated insider — she will score HIGH risk
 
@@ -54,6 +54,7 @@ PyQt6 login window. Log in with:
 |----------|-------------|--------------|----------------------------------|
 | admin    | admin123    | admin        | Full: dashboard, profiles, alerts, UAV config |
 | manager  | manager123  | management   | Summary counts only              |
+| hr_officer | hr_officer123 | compliance | Flagged records and audit trail with pseudonymous identities |
 
 ---
 
@@ -85,6 +86,49 @@ The source response may be a list or an object containing an `events`, `records`
 used by the detector. Set `INSIGHTER_PII_SECRET` to control payload encryption.
 For encrypted database storage, install a compatible `sqlcipher3` build and set
 `INSIGHTER_DB_KEY`; existing plaintext databases are migrated to `database.db.enc`.
+
+### Active Directory ingestion
+
+Install the dependencies and configure an AD bind account before starting the backend:
+
+```powershell
+pip install -r requirements.txt
+$env:INSIGHTER_SOURCE_PROVIDER = "active_directory"
+$env:INSIGHTER_AD_SERVER = "dc.example.com"
+$env:INSIGHTER_AD_PORT = "636"       # 389 for plain LDAP
+$env:INSIGHTER_AD_USE_SSL = "true"   # false for plain LDAP or a mock server
+$env:INSIGHTER_AD_USER = "insighter@example.com"
+$env:INSIGHTER_AD_PASSWORD = "your-password"
+$env:INSIGHTER_AD_SEARCH_BASE = "DC=example,DC=com"
+python app.py
+```
+
+The connector searches person/user objects and maps `sAMAccountName`,
+`lastLogon`/`lastLogonTimestamp`, `badPwdCount`, `title`, and `department` into the
+normalized event fields consumed by the risk model. Missing AD-specific fields become
+zero or `unknown`; file access and transfer fields are zero because AD logon metadata does
+not provide those measurements. All imported records go through `privacy.sanitize_event`
+before insertion.
+
+The `/api/integrations` endpoint performs a bind check and reports Active Directory as
+`connected` only when the required settings are present and the bind succeeds. Missing
+settings, a missing `ldap3` installation, or a failed bind reports `not_connected` without
+preventing the rest of the application from starting.
+
+To test without a real directory, use `ldap3`'s `MockSyncStrategy`: create a mock
+`Server(..., get_info=OFFLINE_AD_2012_R2)`, add entries containing `objectCategory=person`,
+`sAMAccountName`, AD FILETIME `lastLogon`, and `badPwdCount`, then pass the mock
+`Connection` to `fetch_active_directory_events()` or `ingest_from_active_directory()`.
+Set the same `INSIGHTER_AD_*` variables shown above, use `INSIGHTER_AD_USE_SSL=false`,
+and point `INSIGHTER_AD_SEARCH_BASE` at the mock base. The connector accepts an injected
+connection specifically to make this test deterministic and network-free.
+
+The repeatable version of this check is included in `test_ad_integration.py`; run it from
+the project root with:
+
+```powershell
+python -m unittest test_ad_integration.py
+```
 
 ---
 
