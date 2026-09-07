@@ -25,13 +25,12 @@ def hash_identifier(value):
 def encrypt_payload(payload):
     """Encrypt non-identity event details for controlled recovery/audit use."""
     key = base64.urlsafe_b64encode(hashlib.sha256(_secret()).digest())
-    token = Fernet(key).encrypt(
-        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    )
+    token = Fernet(key).encrypt(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
     return token.decode("ascii")
 
 
 def _remove_identifiers(event):
+    """Keep usernames and emails out of the encrypted event payload."""
     return {
         key: value
         for key, value in event.items()
@@ -40,13 +39,13 @@ def _remove_identifiers(event):
 
 
 def sanitize_event(event, source="synthetic"):
-    """Normalize an event and protect its original non-identity payload."""
+    """Normalize a log event and protect its identifier and original payload."""
     user = event.get("user", event.get("username", event.get("email")))
     if user is None:
         raise ValueError("Each event needs a user, username, or email field.")
 
-    return {
-        "user": str(user).strip(),
+    row = {
+        "user": hash_identifier(user),
         "role": str(event.get("role", event.get("job_role", "unknown"))).strip().lower() or "unknown",
         "login_hour": int(event.get("login_hour", 0)),
         "files_accessed": int(event.get("files_accessed", 0)),
@@ -56,3 +55,4 @@ def sanitize_event(event, source="synthetic"):
         "source": source,
         "payload_encrypted": encrypt_payload(_remove_identifiers(event)),
     }
+    return row

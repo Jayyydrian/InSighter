@@ -8,7 +8,13 @@ from privacy import sanitize_event
 from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
 from database import connect
 
-FEATURES = ["login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"]
+FEATURES = [
+    "login_hour",
+    "files_accessed",
+    "data_transferred_mb",
+    "failed_logins",
+    "off_hours_access",
+]
 
 # Ensemble weights per Chapter 3 design: Final Risk Score = 0.6*IF + 0.4*OC-SVM
 IF_WEIGHT    = 0.6
