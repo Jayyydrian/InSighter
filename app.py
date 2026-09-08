@@ -1,23 +1,10 @@
-import re
-
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
+from werkzeug.exceptions import BadRequest
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from auth import (
-    admin_required,
-    compliance_required,
-    init_users_table,
-    login_required,
-    log_action,
-    verify_login,
-)
-from ingestion import (
-    active_directory_status,
-    ensure_logs_schema,
-    ingest_from_configured_source,
-)
+from auth import init_users_table, verify_login, login_required, admin_required, log_action
+from ingestion import ensure_logs_schema, ingest_events, ingest_from_api
 from database import Row, connect, ensure_database
-from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 
 app = Flask(__name__)
@@ -33,7 +20,7 @@ if not has_logs:
     generate()
 
 init_users_table()  # creates `users` table + seeds admin/manager accounts if missing
-ensure_logs_schema()
+ensure_logs_schema()  # upgrades databases created before API ingestion was added
 
 # ── Process-level resource tracker ──────────────────────────────────────────
 _proc = psutil.Process(os.getpid())
@@ -76,18 +63,14 @@ def login():
         if role:
             session["username"] = username
             session["role"] = role
-            log_action(username, "LOGIN_SUCCESS", f"role={role}")
             next_url = request.args.get("next") or url_for("dashboard")
             return redirect(next_url)
-        log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
         return render_template("login.html", error="Invalid username or password."), 401
     return render_template("login.html", error=None)
 
 
 @app.route("/logout")
 def logout():
-    if "username" in session:
-        log_action(session["username"], "LOGOUT", "")
     session.clear()
     return redirect(url_for("login"))
 
@@ -122,16 +105,6 @@ def scores():
 def alerts():
     return jsonify(get_recent_alerts())
 
-
-@app.route("/api/compliance/alerts")
-@compliance_required
-def compliance_alerts():
-    """Return flagged incidents with stable pseudonymous user identifiers."""
-    return jsonify([
-        {**alert, "user": hash_identifier(alert["user"])}
-        for alert in get_recent_alerts()
-    ])
-
 @app.route("/api/sessions")
 @admin_required
 def sessions():
@@ -143,7 +116,6 @@ def sessions():
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
-
 @app.route("/api/reseed")
 @admin_required
 def reseed():
@@ -152,7 +124,6 @@ def reseed():
         _stats["events_total"]   = 0
         _stats["events_per_sec"] = 0.0
         _stats["_tick_times"]    = []
-    log_action(session.get("username"), "DATA_RESEEDED", "synthetic log data regenerated")
     return jsonify({"status": "reseeded"})
 
 @app.route("/api/simulate")
@@ -238,19 +209,16 @@ def update_uav_config():
     ))
     conn.commit()
     conn.close()
-    log_action(session.get("username"), "CONFIG_UPDATED",
-               f"thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
-               f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
 
 
 @app.route("/api/audit-log")
-@admin_required
+@login_required
 def audit_log():
     """
     Chapter 3's Privacy-Compliant Audit Mode: controlled visibility into
     who accessed or changed what, for Data Privacy Act accountability.
-    Available to administrators with real usernames.
+    Available to both roles (admin + management), per the design spec.
     """
     conn = connect()
     conn.row_factory = Row
@@ -261,67 +229,24 @@ def audit_log():
     return jsonify([dict(r) for r in rows])
 
 
-@app.route("/api/compliance/audit-log")
-@compliance_required
-def compliance_audit_log():
-    """Return the audit trail with every available username pseudonymized."""
-    conn = connect()
-    conn.row_factory = Row
-    rows = conn.execute(
-        "SELECT username, action, detail, timestamp FROM audit_log ORDER BY id DESC"
-    ).fetchall()
-    usernames = [row[0] for row in conn.execute(
-        """SELECT username FROM users
-           UNION
-           SELECT user FROM logs"""
-    ).fetchall()]
-    conn.close()
-
-    def pseudonymize_detail(detail):
-        for username in sorted((name for name in usernames if name), key=len, reverse=True):
-            detail = re.sub(
-                rf"(?<!\w){re.escape(username)}(?!\w)",
-                hash_identifier(username),
-                detail,
-                flags=re.IGNORECASE,
-            )
-        return detail
-
-    return jsonify([
-        {
-            **dict(row),
-            "username": hash_identifier(row["username"]) if row["username"] else None,
-            "detail": pseudonymize_detail(row["detail"] or ""),
-        }
-        for row in rows
-    ])
-
-
 @app.route("/api/integrations")
 @login_required
 def integrations():
     """
     Status of the three data-source integrations named in Chapter 3.
-    Honestly reflects current dev state: synthetic data only, no live
-    API connection has been implemented yet.
+    The generic REST connector is the foundation for provider-specific
+    connections; provider credentials and mappings are still required.
     """
-    provider = os.environ.get("INSIGHTER_SOURCE_PROVIDER", "").strip().lower()
     configured = bool(os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip())
+    provider = os.environ.get("INSIGHTER_SOURCE_PROVIDER", "").strip().lower()
     supported = {"active_directory", "google_workspace", "microsoft_365"}
-    ad_status, ad_note = active_directory_status()
     return jsonify([
         {
             "name": name,
             "key": key,
-            "status": ad_status if key == "active_directory" else (
-                "connected"
-                if os.environ.get("INSIGHTER_SOURCE_API_URL", "").strip() and provider == key
-                else "not_connected"
-            ),
+            "status": "connected" if configured and provider == key else "not_connected",
             "note": (
-                ad_note
-                if key == "active_directory"
-                else "REST connector configured; use Ingest Events to append protected events."
+                "REST connector configured; use Ingest API to append protected events."
                 if configured and provider == key
                 else (
                     "Set INSIGHTER_SOURCE_PROVIDER to this source to connect it."
@@ -341,14 +266,25 @@ def integrations():
 @app.route("/api/ingest", methods=["POST"])
 @admin_required
 def ingest():
+    """Ingest events by push or pull through the same normalization path.
+
+    Push mode accepts ``{"events": [...]}`` in the JSON request body. When
+    that key is absent, the endpoint keeps its original pull behavior and
+    fetches events from ``INSIGHTER_SOURCE_API_URL``. Both modes remain behind
+    the same administrator authentication and use ``ingest_events`` for
+    validation, privacy protection, and SQLCipher-backed persistence.
+    """
     try:
-        inserted = ingest_from_configured_source()
-    except (ValueError, requests.RequestException, RuntimeError, OSError) as exc:
+        payload = request.get_json(silent=False) if request.is_json else None
+        if isinstance(payload, dict) and "events" in payload:
+            inserted = ingest_events(payload["events"], source="push")
+        else:
+            inserted = ingest_from_api()
+    except (BadRequest, ValueError, requests.RequestException) as exc:
         log_action(session.get("username"), "INGEST_FAILED", str(exc))
         return jsonify({"error": str(exc)}), 400
     log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
     return jsonify({"status": "ok", "inserted": inserted})
-
 
 @app.route("/api/resources")
 @login_required
@@ -383,6 +319,6 @@ def resources():
     })
 
 if __name__ == "__main__":
-    port = int(os.environ.get("INSIGHTER_PORT", 5051))
-    print(f"\n  InSighter backend -> http://127.0.0.1:{port}\n")
-    app.run(debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings
+    port = int(os.environ.get("INSIGHTER_PORT", 5000))
+    print(f"\n  InSighter backend  ->  http://127.0.0.1:{port}\n")
+    app.run(debug=False, port=port)   # debug=False → no reloader, cleaner CPU readings

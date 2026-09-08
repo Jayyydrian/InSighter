@@ -172,10 +172,25 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 
 /* USER TABLE */
 table{width:100%;border-collapse:collapse}
+.user-table-scroll{
+  max-height:min(560px,calc(100vh - 390px));
+  min-height:180px;
+  overflow:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--accent) var(--bg);
+}
+.user-table-scroll::-webkit-scrollbar{width:8px;height:8px}
+.user-table-scroll::-webkit-scrollbar-track{background:var(--bg)}
+.user-table-scroll::-webkit-scrollbar-thumb{background:var(--accent);border-radius:4px}
+.user-table-scroll table{min-width:760px}
+.history-scroll{max-height:300px;overflow-y:auto}
+.history-scroll::-webkit-scrollbar{width:4px}
+.history-scroll::-webkit-scrollbar-track{background:transparent}
+.history-scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 thead th{
   background:var(--bg);font-size:10px;font-weight:600;color:var(--muted);
   text-transform:uppercase;letter-spacing:.6px;padding:9px 14px;text-align:left;
-  border-bottom:1px solid var(--border);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;
 }
 tbody tr{border-bottom:1px solid var(--border);transition:background .1s;cursor:default}
 tbody tr:last-child{border-bottom:none}
@@ -339,17 +354,19 @@ td{padding:10px 14px;font-size:12px}
           <div class="panel-title"><div class="dot" style="background:var(--accent)"></div>User Risk Matrix</div>
           <span class="panel-meta" id="last-update">—</span>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>User</th><th>IF</th><th>OC-SVM</th><th>Risk Score</th><th>Level</th>
-              <th>Avg Files</th><th>Transfer</th><th>Off-Hrs</th>
-            </tr>
-          </thead>
-          <tbody id="user-tbody">
-            <tr><td colspan="8" class="empty">Loading...</td></tr>
-          </tbody>
-        </table>
+        <div class="user-table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th><th>IF</th><th>OC-SVM</th><th>Risk Score</th><th>Level</th>
+                <th>Avg Files</th><th>Transfer</th><th>Off-Hrs</th>
+              </tr>
+            </thead>
+            <tbody id="user-tbody">
+              <tr><td colspan="8" class="empty">Loading user scores...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="panel">
@@ -372,8 +389,10 @@ td{padding:10px 14px;font-size:12px}
           <div class="panel-title"><div class="dot" style="background:var(--green)"></div>Risk History (last 20 ticks)</div>
           <span class="panel-meta">auto-updates with simulation</span>
         </div>
-        <div class="chart-wrap" id="sparklines">
-          <div class="empty">Start simulation to see history</div>
+        <div class="history-scroll">
+          <div class="chart-wrap" id="sparklines">
+            <div class="empty">Start simulation to see history</div>
+          </div>
         </div>
       </div>
 

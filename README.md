@@ -134,6 +134,20 @@ python -m unittest test_ad_integration.py
 
 ## Project Structure
 
+### CERT r4.2 feature-scale finding
+
+The r4.2 adapter computes removable-device activity from `device.csv` and
+retains it in the standalone cleaned feature table. It is deliberately not
+part of the current shared ensemble: adding the raw Connect-event count to the
+mixed synthetic/CERT feature matrix changed the relative scale of the
+unsupervised models and broke the existing synthetic regression, moving Eve
+from HIGH to MEDIUM while normal synthetic users also moved upward.
+
+This is a constraint of the current shared-baseline approach, not evidence that
+the raw signal is useless. A future experiment should normalize the signal and
+fit baselines per source or per role before adding it to the ensemble. The
+role-aware baseline module is an existing starting point for that work.
+
 ```
 Insighter/
 ├── app.py                     ← Flask backend (Logic + Auth + Data tiers)
