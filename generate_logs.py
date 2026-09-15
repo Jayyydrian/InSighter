@@ -2,7 +2,7 @@ import random
 
 from database import connect
 from privacy import sanitize_event
-from sector_config import get_active_sector, get_sector_config
+from sector_config import get_active_sector, get_anomalous_demo_user, get_demo_roster, get_sector_config
 
 def generate():
     conn = connect()
@@ -28,15 +28,11 @@ def generate():
     sector_config = get_sector_config(sector)
     roles = list(sector_config["roles"])
     categories = list(sector_config["data_categories"])
+    anomalous_user = get_anomalous_demo_user(sector)
     users = {
-        "alice":   {"normal": True},
-        "bob":     {"normal": True},
-        "charlie": {"normal": True},
-        "diana":   {"normal": True},
-        "eve":     {"normal": False},  # insider threat
+        user: {"role": role, "normal": user != anomalous_user}
+        for user, role in get_demo_roster(sector).items()
     }
-    for index, user in enumerate(users):
-        users[user]["role"] = roles[index % len(roles)]
 
     random.seed(42)
     for _ in range(300):

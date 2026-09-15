@@ -100,11 +100,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 .settings-form{display:flex;flex-direction:column;gap:16px;padding:20px}
 .form-row{display:flex;flex-direction:column;gap:6px;max-width:420px}
 .form-row label{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px}
-.form-row input[type=number],.form-row input[type=text],.form-row input[type=password]{
+.form-row input[type=number],.form-row input[type=text],.form-row input[type=password],.form-row select{
   background:var(--surface2);border:1px solid var(--border);border-radius:6px;
   padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;
 }
-.form-row input:focus{outline:none;border-color:var(--accent)}
+.form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent)}
+.taxonomy-hint{font-size:11px;color:var(--muted2)}
 .checkbox-row{display:flex;gap:18px;flex-wrap:wrap}
 .checkbox-row label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0}
 .save-btn{
@@ -529,6 +530,15 @@ td{padding:10px 14px;font-size:12px}
     <div class="panel">
       <div class="settings-form">
         <div class="form-row">
+          <label>Organizational Sector</label>
+          <select id="set-sector">
+            <option value="private_school">Private School</option>
+            <option value="sme_startup">SME &amp; Startup</option>
+            <option value="uav_disaster_response">UAV Disaster Response</option>
+          </select>
+          <span class="taxonomy-hint" id="set-sector-taxonomy"></span>
+        </div>
+        <div class="form-row">
           <label>Detection Threshold — High Risk (%)</label>
           <input type="number" id="set-threshold-high" min="0" max="100" step="0.1"/>
         </div>
@@ -548,11 +558,11 @@ td{padding:10px 14px;font-size:12px}
             <label><input type="checkbox" id="set-target-m365"/> Microsoft 365</label>
           </div>
         </div>
-        <div class="form-row">
+        <div class="form-row" id="set-drone-username-row">
           <label>Drone Operator Username</label>
           <input type="text" id="set-drone-username"/>
         </div>
-        <div class="form-row">
+        <div class="form-row" id="set-drone-password-row">
           <label>Drone Operator Password</label>
           <input type="password" id="set-drone-password" placeholder="Leave blank to keep unchanged"/>
         </div>
@@ -856,9 +866,39 @@ async function loadIntegrations() {
 }
 
 // ══════════════ Settings (UAV Configuration Module) ══════════════
+const SECTOR_TAXONOMY = {
+  private_school: { roles: ['researcher', 'intern', 'admin_staff', 'it_staff'],
+                     data_categories: ['projects', 'private_documents', 'intellectual_property', 'pii'] },
+  sme_startup: { roles: ['finance', 'hr', 'it_admin'],
+                 data_categories: ['financial_transactions', 'client_data', 'employee_records'] },
+  uav_disaster_response: { roles: ['drone_operator'],
+                            data_categories: ['drone_platform_access', 'disaster_data'] },
+};
+
+function applySectorVisibility(sector) {
+  const isUav = sector === 'uav_disaster_response';
+  document.getElementById('set-drone-username-row').style.display = isUav ? '' : 'none';
+  document.getElementById('set-drone-password-row').style.display = isUav ? '' : 'none';
+}
+
+function renderSectorTaxonomy(sector) {
+  const tax = SECTOR_TAXONOMY[sector] || { roles: [], data_categories: [] };
+  document.getElementById('set-sector-taxonomy').textContent =
+    'Roles: ' + tax.roles.join(', ') + ' · Categories: ' + tax.data_categories.join(', ');
+}
+
+function onSectorChanged() {
+  const sector = document.getElementById('set-sector').value;
+  applySectorVisibility(sector);
+  renderSectorTaxonomy(sector);
+}
+
 async function loadSettings() {
   const r = await fetch('/api/uav-config');
   const cfg = await r.json();
+  document.getElementById('set-sector').value = cfg.sector;
+  applySectorVisibility(cfg.sector);
+  renderSectorTaxonomy(cfg.sector);
   document.getElementById('set-threshold-high').value = cfg.threshold_high;
   document.getElementById('set-threshold-medium').value = cfg.threshold_medium;
   document.getElementById('set-sync-interval').value = cfg.sync_interval_minutes;
@@ -870,6 +910,7 @@ async function loadSettings() {
   document.getElementById('set-target-m365').checked = targets.includes('microsoft_365');
 
   document.getElementById('settings-status').textContent = 'Last updated: ' + cfg.updated_at;
+  document.getElementById('set-sector').onchange = onSectorChanged;
 }
 
 async function saveSettings() {
@@ -879,6 +920,7 @@ async function saveSettings() {
   if (document.getElementById('set-target-m365').checked) targets.push('microsoft_365');
 
   const payload = {
+    sector: document.getElementById('set-sector').value,
     threshold_high: parseFloat(document.getElementById('set-threshold-high').value) || 45,
     threshold_medium: parseFloat(document.getElementById('set-threshold-medium').value) || 30,
     sync_interval_minutes: parseInt(document.getElementById('set-sync-interval').value) || 15,

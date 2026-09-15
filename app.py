@@ -230,9 +230,17 @@ def get_uav_config():
 @admin_required
 def update_uav_config():
     data = request.get_json(force=True)
-    sector = data.get("sector", DEFAULT_SECTOR)
-    if sector not in SECTORS:
-        return jsonify({"error": "Invalid deployment sector."}), 400
+    # Only change the sector if the caller explicitly included it; otherwise
+    # keep whatever is currently configured. Previously this fell back to
+    # DEFAULT_SECTOR ("sme_startup") whenever "sector" was missing from the
+    # payload, which silently reverted the deployment to SME/Startup any time
+    # settings were saved from a client that didn't send a sector field.
+    if "sector" in data:
+        sector = data.get("sector") or DEFAULT_SECTOR
+        if sector not in SECTORS:
+            return jsonify({"error": "Invalid deployment sector."}), 400
+    else:
+        sector = get_active_sector() or DEFAULT_SECTOR
     conn = connect()
     conn.execute("""
         UPDATE deployment_config SET

@@ -7,7 +7,13 @@ from sklearn.preprocessing import StandardScaler
 from privacy import sanitize_event
 from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
 from database import connect
-from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config
+from sector_config import (
+    DEFAULT_SECTOR,
+    get_active_sector,
+    get_anomalous_demo_user,
+    get_demo_roster,
+    get_sector_config,
+)
 
 # Excluded: no current AD/Google Workspace/Microsoft 365 integration supplies browsing-derived
 # signal; validated as beneficial in CERT evaluation (see cert_score.py), reserved for future browsing integration.
@@ -180,24 +186,6 @@ def get_recent_alerts():
                    "flagged_by","if_score","ocsvm_score","final_score"]].head(25).to_dict(orient="records")
 
 
-def _live_simulation_roster(conn, sector):
-    """(user, role) pairs the live simulator can draw from for the active sector.
-
-    Prefers whatever users/roles are already seeded in `logs` for this sector
-    (kept in sync with generate_logs()'s round-robin assignment), so the
-    roster always reflects the sector actually configured. Falls back to
-    synthesizing one user per sector role if the table is empty.
-    """
-    roles = get_sector_config(sector)["roles"]
-    rows = conn.execute(
-        "SELECT DISTINCT user, role FROM logs WHERE source = 'synthetic'"
-    ).fetchall()
-    roster = [(r[0], r[1]) for r in rows if r[0] and r[1] and r[1] in roles]
-    if not roster:
-        roster = [(f"user_{i + 1}", role) for i, role in enumerate(roles)] or [("user_1", "unknown")]
-    return roster
-
-
 def inject_live_event():
     """Randomly inject a new log row to simulate live fluctuation.
 
@@ -209,15 +197,15 @@ def inject_live_event():
     sector = get_active_sector(conn) or DEFAULT_SECTOR
     sector_config = get_sector_config(sector)
     categories = list(sector_config["data_categories"])
-    roster = _live_simulation_roster(conn, sector)
+    roster = list(get_demo_roster(sector).items())
+    anomalous_user = get_anomalous_demo_user(sector)
 
     n = len(roster)
-    # By convention the last roster entry is the "watch" profile for this tick,
-    # analogous to how generate_logs() seeds one elevated-risk account per
-    # sector -- but which (user, role) that is now depends on the sector.
-    weights = [0.4] if n == 1 else [0.6 / (n - 1)] * (n - 1) + [0.4]
+    # The active sector wins immediately; stale rows remain historical and age out,
+    # rather than allowing a previous sector's users to drive new simulation data.
+    weights = [0.4 if user == anomalous_user else 0.6 / (n - 1) for user, _ in roster] if n > 1 else [1.0]
     user, role = random.choices(roster, weights=weights)[0]
-    is_watch_profile = (user, role) == roster[-1]
+    is_watch_profile = user == anomalous_user
 
     roll = random.random()
     if is_watch_profile:

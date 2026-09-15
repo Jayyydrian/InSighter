@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
         self._nav_section(layout, "Config")
         integrations_item = _NavItem("\u229e", "Integrations")
         layout.addWidget(integrations_item)
-        settings_item = _NavItem("\u25e7", "UAV Configuration")
+        settings_item = _NavItem("\u25e7", "Configuration")
         layout.addWidget(settings_item)
 
         self.overview_badge = QLabel("0")
