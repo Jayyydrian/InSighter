@@ -12,6 +12,21 @@ except ImportError:
 
 from database import connect
 from privacy import sanitize_event
+from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, role_allowed
+
+# Same fixed demo usernames generate_logs() seeds, in the same order, so
+# legacy rows can be backfilled with a role from whatever sector is active.
+_DEMO_USER_ORDER = ["alice", "bob", "charlie", "diana", "eve"]
+
+
+def _default_role_for_user(user, sector):
+    """Best-effort role for a legacy row, using generate_logs()'s round-robin
+    convention against the *active sector's* role taxonomy (instead of a
+    fixed, sector-agnostic job title)."""
+    roles = get_sector_config(sector)["roles"]
+    if user not in _DEMO_USER_ORDER or not roles:
+        return None
+    return roles[_DEMO_USER_ORDER.index(user) % len(roles)]
 
 
 def ensure_logs_schema():
@@ -24,6 +39,7 @@ def ensure_logs_schema():
             "source": "TEXT DEFAULT 'synthetic'",
             "payload_encrypted": "TEXT DEFAULT ''",
             "ingested_at": "TEXT",
+            "data_category": "TEXT DEFAULT ''",
         }
         for name, definition in additions.items():
             if name not in columns:
@@ -32,16 +48,26 @@ def ensure_logs_schema():
                     conn.execute(
                         "UPDATE logs SET ingested_at = CURRENT_TIMESTAMP WHERE ingested_at IS NULL"
                     )
-        conn.execute(
-            """UPDATE logs SET role = CASE user
-                WHEN 'alice' THEN 'staff'
-                WHEN 'bob' THEN 'staff'
-                WHEN 'charlie' THEN 'developer'
-                WHEN 'diana' THEN 'staff'
-                WHEN 'eve' THEN 'finance analyst'
-                ELSE role END
-            WHERE role IS NULL OR role = '' OR role = 'unknown'"""
-        )
+                if name == "data_category":
+                    sector = get_active_sector(conn) or "sme_startup"
+                    category = get_sector_config(sector)["data_categories"][0]
+                    conn.execute(
+                        "UPDATE logs SET data_category = ? WHERE data_category IS NULL OR data_category = ''",
+                        (category,),
+                    )
+        sector = get_active_sector(conn) or DEFAULT_SECTOR
+        missing = conn.execute(
+            """SELECT DISTINCT user FROM logs
+               WHERE role IS NULL OR role = '' OR role = 'unknown'"""
+        ).fetchall()
+        for (user,) in missing:
+            role = _default_role_for_user(user, sector)
+            if role:
+                conn.execute(
+                    """UPDATE logs SET role = ? WHERE user = ?
+                       AND (role IS NULL OR role = '' OR role = 'unknown')""",
+                    (role, user),
+                )
         conn.commit()
     finally:
         conn.close()
@@ -55,16 +81,25 @@ def store_events(events, source="api"):
     try:
         for event in events:
             row = sanitize_event(event, source=source)
+            sector = get_active_sector(conn)
+            if sector is not None and not role_allowed(row["role"], sector):
+                raise ValueError(
+                    f"Role '{row['role']}' is not allowed for active sector '{sector}'."
+                )
+            data_category = str(event.get("data_category", "")).strip().lower()
+            if not data_category:
+                data_category = get_sector_config(sector)["data_categories"][0]
             conn.execute(
                 """INSERT INTO logs
                 (user, login_hour, files_accessed, data_transferred_mb,
-                 failed_logins, off_hours_access, role, source, payload_encrypted, ingested_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                 failed_logins, off_hours_access, role, source, payload_encrypted,
+                 ingested_at, data_category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)""",
                 (
                     row["user"], row["login_hour"], row["files_accessed"],
                     row["data_transferred_mb"], row["failed_logins"],
                     row["off_hours_access"], row["role"], row["source"],
-                    row["payload_encrypted"],
+                    row["payload_encrypted"], data_category,
                 ),
             )
             inserted += 1
@@ -179,6 +214,7 @@ def _active_directory_event(entry):
         "failed_logins": _attribute_value(attributes, "badPwdCount", 0) or 0,
         "off_hours_access": int(bool(last_logon and (last_logon.hour < 6 or last_logon.hour > 21))),
         "ad_last_logon": last_logon.isoformat() if last_logon else None,
+        "data_category": "",
     }
 
 

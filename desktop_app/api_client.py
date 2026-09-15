@@ -58,6 +58,12 @@ class ApiClient:
     def get_uav_config(self):
         return self._get("/api/uav-config")
 
+    def get_deployment_taxonomy(self):
+        return self._get("/api/deployment-config/taxonomy")
+
+    def get_monitoring_scope(self):
+        return self._get("/api/deployment-config/monitoring-scope")
+
     def get_summary(self):
         return self._get("/api/summary")
 
@@ -80,6 +86,12 @@ class ApiClient:
         resp = self.session.post(f"{BASE_URL}/api/uav-config", json=payload)
         if resp.status_code != 200:
             raise ApiError(resp.status_code, "Failed to save UAV configuration.")
+        return resp.json()
+
+    def save_deployment_config(self, payload):
+        resp = self.session.post(f"{BASE_URL}/api/deployment-config", json=payload)
+        if resp.status_code != 200:
+            raise ApiError(resp.status_code, "Failed to save deployment configuration.")
         return resp.json()
 
     def reseed(self):

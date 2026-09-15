@@ -16,6 +16,7 @@ import bcrypt
 from functools import wraps
 from flask import session, redirect, url_for, request, render_template
 from database import connect
+from sector_config import DEFAULT_SECTOR, SECTORS
 
 
 def init_users_table():
@@ -50,8 +51,9 @@ def init_users_table():
         conn.execute("DROP TABLE users")
         conn.execute("ALTER TABLE users_new RENAME TO users")
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS uav_config (
+        CREATE TABLE IF NOT EXISTS deployment_config (
             id                      INTEGER PRIMARY KEY CHECK (id = 1),
+            sector                  TEXT DEFAULT 'sme_startup',
             threshold_high          REAL DEFAULT 45,
             threshold_medium        REAL DEFAULT 30,
             log_targets             TEXT DEFAULT 'active_directory,google_workspace,microsoft_365',
@@ -60,6 +62,21 @@ def init_users_table():
             updated_at              TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    deployment_columns = {row[1] for row in conn.execute("PRAGMA table_info(deployment_config)")}
+    if "sector" not in deployment_columns:
+        conn.execute("ALTER TABLE deployment_config ADD COLUMN sector TEXT DEFAULT 'sme_startup'")
+    legacy = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='uav_config'"
+    ).fetchone()
+    if legacy:
+        conn.execute("""
+            INSERT OR IGNORE INTO deployment_config
+            (id, sector, threshold_high, threshold_medium, log_targets,
+             sync_interval_minutes, drone_operator_username, updated_at)
+            SELECT id, ?, threshold_high, threshold_medium, log_targets,
+                   sync_interval_minutes, drone_operator_username, updated_at
+            FROM uav_config
+        """, (DEFAULT_SECTOR,))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,9 +86,9 @@ def init_users_table():
             timestamp  TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    row = conn.execute("SELECT COUNT(*) FROM uav_config").fetchone()[0]
+    row = conn.execute("SELECT COUNT(*) FROM deployment_config").fetchone()[0]
     if row == 0:
-        conn.execute("INSERT INTO uav_config (id) VALUES (1)")
+        conn.execute("INSERT INTO deployment_config (id, sector) VALUES (1, ?)", (DEFAULT_SECTOR,))
     conn.commit()
 
     seed_users = [

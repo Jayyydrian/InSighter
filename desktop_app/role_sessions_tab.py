@@ -1,4 +1,5 @@
 from collections import defaultdict
+import zlib
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget,
@@ -7,13 +8,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 
-ROLE_COLORS = {
-    "it admin": "#3b82f6",
-    "hr officer": "#8b5cf6",
-    "developer": "#06b6d4",
-    "registrar": "#10b981",
-    "finance analyst": "#ef4444",
-}
+# Roles are whatever the active sector defines (see sector_config.py), so
+# colors are derived from the role name instead of a fixed per-role table.
+ROLE_PALETTE = ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#ef4444", "#f59e0b", "#ec4899", "#14b8a6"]
+
+
+def role_color(role):
+    return ROLE_PALETTE[zlib.crc32(role.encode()) % len(ROLE_PALETTE)]
 
 
 class RoleSessionsTab(QWidget):
@@ -86,7 +87,8 @@ class RoleSessionsTab(QWidget):
         header.setContentsMargins(16, 12, 16, 12)
         role_label = QLabel(role.title())
         role_label.setStyleSheet(
-            f"color:{ROLE_COLORS.get(role, '#e2e8f0')}; font-weight:700; font-size:13px;"
+            f"color:{role_color(role) if role and role != 'unknown' else '#e2e8f0'}; "
+            f"font-weight:700; font-size:13px;"
         )
         header.addWidget(role_label)
         header.addStretch()

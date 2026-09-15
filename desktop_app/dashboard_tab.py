@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+import zlib
 
 RED = "#ef4444"
 YELLOW = "#f59e0b"
@@ -26,18 +27,17 @@ CRITICAL = "#dc2626"
 RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#10b981"}
 SEVERITY_COLORS = {"CRITICAL": CRITICAL, "HIGH": RED, "MEDIUM": YELLOW}
 
-# Same fixed identity mapping as the web dashboard's AVATAR_COLORS / USER_ROLES
-AVATAR_COLORS = {
-    "alice": "#3b82f6", "bob": "#8b5cf6", "charlie": "#06b6d4",
-    "diana": "#10b981", "eve": "#ef4444",
-}
-USER_ROLES = {
-    "alice": "IT Admin", "bob": "HR Officer", "charlie": "Developer",
-    "diana": "Registrar", "eve": "Finance Analyst",
-}
-USER_ORDER = ["alice", "bob", "charlie", "diana", "eve"]
+# Users and roles are whatever the active sector/roster returns from the API
+# (see /api/scores), not a fixed cast -- so avatar colors are derived from the
+# username instead of looked up in a static per-demo-user table.
+AVATAR_PALETTE = ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#ef4444", "#f59e0b", "#ec4899", "#14b8a6"]
 
 HISTORY_MAX = 20
+
+
+def avatar_color(username):
+    # Stable across process restarts (unlike builtin hash(), which is salted).
+    return AVATAR_PALETTE[zlib.crc32(username.encode()) % len(AVATAR_PALETTE)]
 
 
 def score_color(pct):
@@ -100,8 +100,9 @@ class DashboardTab(QWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
-        self.history = {u: [] for u in USER_ORDER}
+        self.history = {}
         self.last_users = []
+        self._sparkline_rows = {}
         self._build_ui()
 
     # -- UI construction --------------------------------------------------
@@ -216,13 +217,16 @@ class DashboardTab(QWidget):
         self.sparkline_layout.setSpacing(10)
         layout.addWidget(self.sparkline_container)
 
-        self._sparkline_rows = {}
-        for user in USER_ORDER:
+        # Rows are added lazily in _ensure_sparkline_row() once we know which
+        # users the active sector/roster actually returns.
+        return panel
+
+    def _ensure_sparkline_row(self, user):
+        if user not in self._sparkline_rows:
             row_widget, bars_layout, val_label = self._make_sparkline_row(user)
             self.sparkline_layout.addWidget(row_widget)
             self._sparkline_rows[user] = (bars_layout, val_label)
-
-        return panel
+        return self._sparkline_rows[user]
 
     def _make_sparkline_row(self, user):
         row = QWidget()
@@ -258,7 +262,12 @@ class DashboardTab(QWidget):
         self._refresh_alerts()
 
     def reset_history(self):
-        self.history = {u: [] for u in USER_ORDER}
+        self.history = {}
+        while self.sparkline_layout.count():
+            item = self.sparkline_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._sparkline_rows = {}
 
     def _refresh_scores(self):
         try:
@@ -283,7 +292,7 @@ class DashboardTab(QWidget):
 
         self.table.setRowCount(len(users))
         for row, u in enumerate(users):
-            self.table.setCellWidget(row, 0, self._user_cell(u["user"]))
+            self.table.setCellWidget(row, 0, self._user_cell(u["user"], u.get("role", "")))
 
             for col, key in ((1, "if_score"), (2, "ocsvm_score")):
                 item = QTableWidgetItem(str(u[key]))
@@ -310,7 +319,7 @@ class DashboardTab(QWidget):
                 del hist[0]
         self._update_sparklines()
 
-    def _user_cell(self, username):
+    def _user_cell(self, username, role=""):
         w = QWidget()
         w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
@@ -320,7 +329,7 @@ class DashboardTab(QWidget):
         av = QLabel(username[0].upper())
         av.setFixedSize(26, 26)
         av.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        color = AVATAR_COLORS.get(username, MUTED)
+        color = avatar_color(username)
         av.setStyleSheet(
             f"background:{color}; color:white; border-radius:13px; "
             f"font-weight:700; font-size:11px; font-family:Consolas,monospace;"
@@ -330,10 +339,10 @@ class DashboardTab(QWidget):
         text_col.setSpacing(0)
         name = QLabel(username)
         name.setStyleSheet(f"color:{TEXT}; font-weight:500; font-size:12px;")
-        role = QLabel(USER_ROLES.get(username, ""))
-        role.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        role_label = QLabel(str(role).title())
+        role_label.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         text_col.addWidget(name)
-        text_col.addWidget(role)
+        text_col.addWidget(role_label)
 
         h.addWidget(av)
         h.addLayout(text_col)
@@ -385,9 +394,8 @@ class DashboardTab(QWidget):
         return w
 
     def _update_sparklines(self):
-        for user in USER_ORDER:
-            hist = self.history.get(user, [])
-            bars_layout, val_label = self._sparkline_rows[user]
+        for user, hist in self.history.items():
+            bars_layout, val_label = self._ensure_sparkline_row(user)
 
             while bars_layout.count():
                 item = bars_layout.takeAt(0)

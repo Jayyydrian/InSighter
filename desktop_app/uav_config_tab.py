@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QDoubleSpinBox,
-    QSpinBox, QCheckBox, QLineEdit, QPushButton, QGridLayout
+    QSpinBox, QCheckBox, QLineEdit, QPushButton, QGridLayout, QComboBox
 )
 
 
@@ -28,11 +28,11 @@ class UavConfigTab(QWidget):
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(16)
 
-        title = QLabel("Settings")
+        title = QLabel("Deployment Configuration")
         title.setObjectName("h1")
         outer.addWidget(title)
         subtitle = QLabel(
-            "Detection thresholds and edge-deployment configuration (UAV Configuration Module)."
+            "Sector, detection thresholds, monitoring scope, and deployment configuration."
         )
         subtitle.setObjectName("muted")
         outer.addWidget(subtitle)
@@ -45,6 +45,31 @@ class UavConfigTab(QWidget):
         form.setHorizontalSpacing(16)
 
         row = 0
+        form.addWidget(self._label("Organizational Sector"), row, 0)
+        self.sector = QComboBox()
+        self.sector_options = [
+            ("private_school", "Private School"),
+            ("sme_startup", "SME & Startup"),
+            ("uav_disaster_response", "UAV Disaster Response"),
+        ]
+        for value, label in self.sector_options:
+            self.sector.addItem(label, value)
+        self.sector.currentIndexChanged.connect(self._sector_changed)
+        form.addWidget(self.sector, row, 1)
+        row += 1
+
+        form.addWidget(self._label("Allowed Roles"), row, 0)
+        self.roles_label = QLabel("-")
+        self.roles_label.setWordWrap(True)
+        form.addWidget(self.roles_label, row, 1)
+        row += 1
+
+        form.addWidget(self._label("Monitored Data Categories"), row, 0)
+        self.categories_label = QLabel("-")
+        self.categories_label.setWordWrap(True)
+        form.addWidget(self.categories_label, row, 1)
+        row += 1
+
         form.addWidget(self._label("Detection Threshold — High Risk"), row, 0)
         self.threshold_high = QDoubleSpinBox()
         self.threshold_high.setRange(0, 100)
@@ -59,7 +84,8 @@ class UavConfigTab(QWidget):
         form.addWidget(self.threshold_medium, row, 1)
         row += 1
 
-        form.addWidget(self._label("Sync Interval"), row, 0)
+        self.sync_label = self._label("Sync Interval")
+        form.addWidget(self.sync_label, row, 0)
         self.sync_interval = QSpinBox()
         self.sync_interval.setRange(1, 1440)
         self.sync_interval.setSuffix(" min")
@@ -78,12 +104,14 @@ class UavConfigTab(QWidget):
         form.addWidget(targets_widget, row, 1)
         row += 1
 
-        form.addWidget(self._label("Drone Operator Username"), row, 0)
+        self.drone_username_label = self._label("Drone Operator Username")
+        form.addWidget(self.drone_username_label, row, 0)
         self.drone_username = QLineEdit()
         form.addWidget(self.drone_username, row, 1)
         row += 1
 
-        form.addWidget(self._label("Drone Operator Password"), row, 0)
+        self.drone_password_label = self._label("Drone Operator Password")
+        form.addWidget(self.drone_password_label, row, 0)
         pw_row = QHBoxLayout()
         self.drone_password = QLineEdit()
         self.drone_password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -95,6 +123,10 @@ class UavConfigTab(QWidget):
         row += 1
 
         outer.addWidget(card)
+
+        self.scope_label = QLabel("Monitoring scope: -")
+        self.scope_label.setObjectName("muted")
+        outer.addWidget(self.scope_label)
 
         btn_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Configuration")
@@ -111,6 +143,7 @@ class UavConfigTab(QWidget):
         self.updated_label.setObjectName("muted")
         outer.addWidget(self.updated_label)
         outer.addStretch()
+        self._sector_changed()
 
     def _label(self, text):
         lbl = QLabel(text)
@@ -123,6 +156,10 @@ class UavConfigTab(QWidget):
         except Exception:
             return
 
+        index = self.sector.findData(cfg.get("sector", "sme_startup"))
+        self.sector.setCurrentIndex(index if index >= 0 else 1)
+        taxonomy = cfg.get("taxonomy", {})
+        self._set_taxonomy(taxonomy)
         self.threshold_high.setValue(cfg["threshold_high"])
         self.threshold_medium.setValue(cfg["threshold_medium"])
         self.sync_interval.setValue(cfg["sync_interval_minutes"])
@@ -133,9 +170,18 @@ class UavConfigTab(QWidget):
             cb.setChecked(key in active_targets)
 
         self.updated_label.setText(f"Last updated: {cfg['updated_at']}")
+        try:
+            scope = self.client.get_monitoring_scope()
+            self.scope_label.setText(
+                f"Monitoring scope: {scope['in_scope_percent']:.1f}% of events in scope "
+                f"({scope['in_scope_events']}/{scope['total_events']})"
+            )
+        except Exception:
+            self.scope_label.setText("Monitoring scope: unavailable")
 
     def _save(self):
         payload = {
+            "sector": self.sector.currentData(),
             "threshold_high": self.threshold_high.value(),
             "threshold_medium": self.threshold_medium.value(),
             "sync_interval_minutes": self.sync_interval.value(),
@@ -143,7 +189,7 @@ class UavConfigTab(QWidget):
             "drone_operator_username": self.drone_username.text().strip() or "drone_operator",
         }
         try:
-            self.client.save_uav_config(payload)
+            self.client.save_deployment_config(payload)
             self.status_label.setText("Saved.")
             self.status_label.setStyleSheet("color:#22c55e; font-size:12px;")
             self.drone_password.clear()
@@ -151,3 +197,28 @@ class UavConfigTab(QWidget):
         except Exception as exc:
             self.status_label.setText(f"Failed to save: {exc}")
             self.status_label.setStyleSheet("color:#ef4444; font-size:12px;")
+
+    def _set_taxonomy(self, taxonomy):
+        self.roles_label.setText(", ".join(taxonomy.get("roles", [])) or "-")
+        self.categories_label.setText(", ".join(taxonomy.get("data_categories", [])) or "-")
+
+    def _sector_changed(self):
+        sector = self.sector.currentData()
+        labels = dict(self.sector_options)
+        mappings = {
+            "private_school": ["researcher", "intern", "admin_staff", "it_staff"],
+            "sme_startup": ["finance", "hr", "it_admin"],
+            "uav_disaster_response": ["drone_platform_access", "disaster_data"],
+        }
+        roles = {
+            "private_school": ["researcher", "intern", "admin_staff", "it_staff"],
+            "sme_startup": ["finance", "hr", "it_admin"],
+            "uav_disaster_response": ["drone_operator"],
+        }
+        self._set_taxonomy({"roles": roles.get(sector, []), "data_categories": mappings.get(sector, [])})
+        is_uav = sector == "uav_disaster_response"
+        for widget in (
+            self.sync_interval, self.drone_username, self.drone_password,
+            self.sync_label, self.drone_username_label, self.drone_password_label,
+        ):
+            widget.setVisible(is_uav)

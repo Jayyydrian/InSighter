@@ -1,6 +1,6 @@
-# InSighter — Mini POC
+# InSighter 
 
-AI-assisted insider threat detection proof-of-concept.
+AI-assisted insider threat detection.
 Runs locally in under 2 minutes.
 
 ---

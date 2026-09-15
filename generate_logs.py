@@ -2,6 +2,7 @@ import random
 
 from database import connect
 from privacy import sanitize_event
+from sector_config import get_active_sector, get_sector_config
 
 def generate():
     conn = connect()
@@ -15,6 +16,7 @@ def generate():
             data_transferred_mb REAL,
             failed_logins INTEGER,
             off_hours_access INTEGER,
+            data_category TEXT DEFAULT '',
             role TEXT DEFAULT 'unknown',
             source TEXT DEFAULT 'synthetic',
             payload_encrypted TEXT DEFAULT '',
@@ -22,15 +24,19 @@ def generate():
         )
     """)
 
+    sector = get_active_sector(conn)
+    sector_config = get_sector_config(sector)
+    roles = list(sector_config["roles"])
+    categories = list(sector_config["data_categories"])
     users = {
         "alice":   {"normal": True},
         "bob":     {"normal": True},
         "charlie": {"normal": True},
         "diana":   {"normal": True},
-        "eve":     {"normal": False, "role": "finance analyst"},  # insider threat
+        "eve":     {"normal": False},  # insider threat
     }
-    for user in ("alice", "bob", "charlie", "diana"):
-        users[user]["role"] = "developer" if user == "charlie" else "staff"
+    for index, user in enumerate(users):
+        users[user]["role"] = roles[index % len(roles)]
 
     random.seed(42)
     for _ in range(300):
@@ -58,16 +64,18 @@ def generate():
                 row,
             ))
             event["role"] = props["role"]
+            event["data_category"] = categories[0 if props["normal"] else -1]
             protected = sanitize_event(event, source="synthetic")
             conn.execute(
                 """INSERT INTO logs
                 (user, login_hour, files_accessed, data_transferred_mb,
-                 failed_logins, off_hours_access, role, source, payload_encrypted)
-                VALUES (?,?,?,?,?,?,?,?,?)""",
+                 failed_logins, off_hours_access, role, source, payload_encrypted,
+                 data_category)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 tuple(protected[key] for key in (
                     "user", "login_hour", "files_accessed", "data_transferred_mb",
                     "failed_logins", "off_hours_access", "role", "source", "payload_encrypted",
-                )),
+                )) + (event["data_category"],),
             )
 
     conn.commit()

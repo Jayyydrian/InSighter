@@ -1,6 +1,7 @@
 import re
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
+from werkzeug.exceptions import BadRequest
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
 from auth import (
@@ -15,10 +16,12 @@ from ingestion import (
     active_directory_status,
     ensure_logs_schema,
     ingest_from_configured_source,
+    store_events,
 )
 from database import Row, connect, ensure_database
 from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
+from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector_config, monitoring_scope as calculate_monitoring_scope
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
@@ -201,27 +204,39 @@ def summary_counts():
     return jsonify(counts)
 
 
+def _deployment_config_payload():
+    conn = connect()
+    row = conn.execute("""
+        SELECT sector, threshold_high, threshold_medium, log_targets,
+               sync_interval_minutes, drone_operator_username, updated_at
+        FROM deployment_config WHERE id = 1
+    """).fetchone()
+    conn.close()
+    keys = ["sector", "threshold_high", "threshold_medium", "log_targets",
+            "sync_interval_minutes", "drone_operator_username", "updated_at"]
+    payload = dict(zip(keys, row))
+    payload["taxonomy"] = get_sector_config(payload["sector"])
+    return payload
+
+
+@app.route("/api/deployment-config", methods=["GET"])
 @app.route("/api/uav-config", methods=["GET"])
 @admin_required
 def get_uav_config():
-    conn = connect()
-    row = conn.execute("""
-        SELECT threshold_high, threshold_medium, log_targets,
-               sync_interval_minutes, drone_operator_username, updated_at
-        FROM uav_config WHERE id = 1
-    """).fetchone()
-    conn.close()
-    keys = ["threshold_high", "threshold_medium", "log_targets",
-            "sync_interval_minutes", "drone_operator_username", "updated_at"]
-    return jsonify(dict(zip(keys, row)))
+    return jsonify(_deployment_config_payload())
 
+@app.route("/api/deployment-config", methods=["POST"])
 @app.route("/api/uav-config", methods=["POST"])
 @admin_required
 def update_uav_config():
     data = request.get_json(force=True)
+    sector = data.get("sector", DEFAULT_SECTOR)
+    if sector not in SECTORS:
+        return jsonify({"error": "Invalid deployment sector."}), 400
     conn = connect()
     conn.execute("""
-        UPDATE uav_config SET
+        UPDATE deployment_config SET
+            sector = ?,
             threshold_high = ?,
             threshold_medium = ?,
             log_targets = ?,
@@ -230,6 +245,7 @@ def update_uav_config():
             updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
     """, (
+        sector,
         data.get("threshold_high", 45),
         data.get("threshold_medium", 30),
         data.get("log_targets", ""),
@@ -239,9 +255,25 @@ def update_uav_config():
     conn.commit()
     conn.close()
     log_action(session.get("username"), "CONFIG_UPDATED",
-               f"thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
+               f"sector={sector}, thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
                f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
+
+
+@app.route("/api/deployment-config/taxonomy")
+@login_required
+def deployment_taxonomy():
+    sector = get_active_sector()
+    return jsonify({"sector": sector, **get_sector_config(sector)})
+
+
+@app.route("/api/deployment-config/monitoring-scope")
+@login_required
+def monitoring_scope():
+    conn = connect()
+    result = calculate_monitoring_scope(conn)
+    conn.close()
+    return jsonify(result)
 
 
 @app.route("/api/audit-log")
@@ -341,9 +373,19 @@ def integrations():
 @app.route("/api/ingest", methods=["POST"])
 @admin_required
 def ingest():
+    """Ingest events by push or pull through the same normalization path.
+
+    Push mode accepts ``{"events": [...]}`` in the JSON request body. When
+    that key is absent, the endpoint keeps its original pull behavior and
+    fetches events from the configured source.
+    """
     try:
-        inserted = ingest_from_configured_source()
-    except (ValueError, requests.RequestException, RuntimeError, OSError) as exc:
+        payload = request.get_json(silent=False) if request.is_json else None
+        if isinstance(payload, dict) and "events" in payload:
+            inserted = store_events(payload["events"], source="push")
+        else:
+            inserted = ingest_from_configured_source()
+    except (BadRequest, ValueError, requests.RequestException, RuntimeError, OSError) as exc:
         log_action(session.get("username"), "INGEST_FAILED", str(exc))
         return jsonify({"error": str(exc)}), 400
     log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
