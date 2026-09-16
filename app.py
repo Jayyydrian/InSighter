@@ -4,13 +4,14 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, s
 from werkzeug.exceptions import BadRequest
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
+from llm_advisor import explain_alert
 from auth import (
     admin_required,
     compliance_required,
     init_users_table,
     login_required,
     log_action,
-    verify_login,
+    authenticate_login,
 )
 from ingestion import (
     active_directory_status,
@@ -25,6 +26,10 @@ from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
+# Lets desktop_app/server_launcher.py tell a genuinely-fresh backend process apart
+# from a stale one left running from before app.py was last edited on disk, instead
+# of silently reusing whatever already answers on the port (see /api/_backend-info).
+_APP_FILE_MTIME = os.path.getmtime(__file__)
 
 ensure_database()
 startup_conn = connect()
@@ -69,19 +74,31 @@ def record_tick(ml_ms, db_read_ms, db_write_ms):
             span = times[-1] - times[0]
             _stats["events_per_sec"] = round((len(times) - 1) / span, 2) if span > 0 else 0.0
 
+@app.route("/api/_backend-info")
+def backend_info():
+    """Unauthenticated freshness probe for desktop_app/server_launcher.py."""
+    return jsonify({"pid": os.getpid(), "app_mtime": _APP_FILE_MTIME})
+
+
 # ── Auth routes ──────────────────────────────────────────────────────────────
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        role = verify_login(username, password)
+        role, retry_after = authenticate_login(username, password)
         if role:
             session["username"] = username
             session["role"] = role
             log_action(username, "LOGIN_SUCCESS", f"role={role}")
             next_url = request.args.get("next") or url_for("dashboard")
             return redirect(next_url)
+        if retry_after:
+            log_action(username or "(blank)", "LOGIN_COOLDOWN", "too many failed attempts")
+            return render_template(
+                "login.html",
+                error=f"Too many unsuccessful sign-in attempts. Try again in about {retry_after} seconds.",
+            ), 429
         log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
         return render_template("login.html", error="Invalid username or password."), 401
     return render_template("login.html", error=None)
@@ -110,6 +127,7 @@ def dashboard():
     return render_template(
         "summary.html",
         username=session.get("username"),
+        role=session.get("role"),
         high_count=counts["HIGH"],
         medium_count=counts["MEDIUM"],
         low_count=counts["LOW"],
@@ -124,6 +142,34 @@ def scores():
 @admin_required
 def alerts():
     return jsonify(get_recent_alerts())
+
+
+# In-memory cache for AI explanations, keyed by alert (log) id -- the underlying
+# log row never changes once written, so a given alert only needs to be sent to
+# the LLM once. Not persisted across restarts; that's fine for a demo/dev tool.
+_alert_explanation_cache = {}
+_alert_explanation_cache_lock = threading.Lock()
+
+
+@app.route("/api/alerts/<int:alert_id>/explain", methods=["POST"])
+@admin_required
+def explain_alert_route(alert_id):
+    with _alert_explanation_cache_lock:
+        cached = _alert_explanation_cache.get(alert_id)
+    if cached is not None:
+        return jsonify(cached)
+
+    alert = next((a for a in get_recent_alerts() if a["id"] == alert_id), None)
+    if alert is None:
+        return jsonify({"error": "Alert not found (it may have scrolled out of the recent window)."}), 404
+
+    sector = get_active_sector() or DEFAULT_SECTOR
+    result = explain_alert(alert, sector, get_sector_config(sector))
+
+    if result["available"]:
+        with _alert_explanation_cache_lock:
+            _alert_explanation_cache[alert_id] = result
+    return jsonify(result)
 
 
 @app.route("/api/compliance/alerts")
@@ -155,12 +201,19 @@ def reseed():
         _stats["events_total"]   = 0
         _stats["events_per_sec"] = 0.0
         _stats["_tick_times"]    = []
+    with _alert_explanation_cache_lock:
+        _alert_explanation_cache.clear()
     log_action(session.get("username"), "DATA_RESEEDED", "synthetic log data regenerated")
     return jsonify({"status": "reseeded"})
 
 @app.route("/api/simulate")
 @admin_required
 def simulate():
+    _run_simulation_tick()
+    return jsonify({"status": "ok"})
+
+
+def _run_simulation_tick():
     # DB write
     t0 = time.perf_counter()
     inject_live_event()
@@ -180,12 +233,38 @@ def simulate():
     features = ["login_hour","files_accessed","data_transferred_mb","failed_logins","off_hours_access"]
     scaler = StandardScaler()
     X = scaler.fit_transform(df[features])
-    model = IsolationForest(contamination=0.08, random_state=42, n_estimators=200)
+    model = IsolationForest(
+        contamination=0.08,
+        random_state=42,
+        n_estimators=max(40, int(os.environ.get("INSIGHTER_MODEL_ESTIMATORS", "80"))),
+    )
     model.fit_predict(X)
     ml_ms = (time.perf_counter() - t2) * 1000
 
     record_tick(ml_ms, db_read_ms, db_write_ms)
-    return jsonify({"status": "ok"})
+
+
+def _background_simulation_loop(interval_seconds):
+    """Keeps injecting + scoring synthetic events on a timer, independent of
+    any logged-in session or open browser tab. This is what makes the demo
+    "live" the instant the server process starts -- before anyone logs in,
+    and continuously across account switches -- instead of depending on the
+    old client-side JS interval that only ran while an admin had the
+    dashboard open with "Start Simulation" toggled on."""
+    while True:
+        try:
+            _run_simulation_tick()
+        except Exception:
+            # A transient DB/model hiccup should never kill the background loop.
+            pass
+        time.sleep(interval_seconds)
+
+
+if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
+    _sim_interval = float(os.environ.get("INSIGHTER_SIM_INTERVAL_SECONDS", "6"))
+    threading.Thread(
+        target=_background_simulation_loop, args=(_sim_interval,), daemon=True
+    ).start()
 
 @app.route("/api/whoami")
 @login_required

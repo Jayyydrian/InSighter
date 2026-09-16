@@ -4,6 +4,9 @@ Thin HTTP client the desktop app uses to talk to the InSighter Flask backend
 Presentation tier, per the Chapter 3 five-tier architecture.
 """
 
+import html
+import re
+
 import requests
 
 from desktop_app.server_launcher import BASE_URL
@@ -35,6 +38,13 @@ class ApiClient:
             probe = self.session.get(f"{BASE_URL}/api/whoami")
             self.role = probe.json().get("role")
             return True
+        if resp.status_code in (401, 429):
+            match = re.search(r'<div class="error">(.*?)</div>', resp.text, re.DOTALL)
+            message = html.unescape(match.group(1)).strip() if match else (
+                "Too many unsuccessful sign-in attempts. Please try again later."
+                if resp.status_code == 429 else "Invalid username or password."
+            )
+            raise ApiError(resp.status_code, message)
         return False
 
     def logout(self):
@@ -48,6 +58,9 @@ class ApiClient:
 
     def get_alerts(self):
         return self._get("/api/alerts")
+
+    def explain_alert(self, alert_id):
+        return self._post(f"/api/alerts/{int(alert_id)}/explain")
 
     def get_compliance_alerts(self):
         return self._get("/api/compliance/alerts")

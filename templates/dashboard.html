@@ -221,6 +221,17 @@ td{padding:10px 14px;font-size:12px}
 .a-desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
 .a-time{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:3px}
 .a-sev{margin-left:auto;flex-shrink:0}
+.ai-btn{
+  margin-top:6px;background:none;border:1px solid var(--border);color:var(--accent);
+  font-size:10px;font-weight:600;padding:3px 8px;border-radius:5px;cursor:pointer;
+}
+.ai-btn:hover{background:rgba(59,130,246,.08)}
+.ai-panel{margin-top:8px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);
+  border-radius:8px;font-size:11px;line-height:1.5}
+.ai-panel b{color:#94a3b8}
+.ai-explain{color:var(--text)}
+.ai-rec{color:var(--text);margin-top:6px}
+.ai-loading,.ai-unavailable{color:var(--muted);font-style:italic}
 
 /* RESOURCE PANEL */
 .res-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
@@ -576,19 +587,17 @@ td{padding:10px 14px;font-size:12px}
 </div><!-- /app -->
 
 <script>
-const AVATAR_COLORS = {
-  alice:'#3b82f6', bob:'#8b5cf6', charlie:'#06b6d4',
-  diana:'#10b981', eve:'#ef4444'
-};
-const USER_ROLES = {
-  alice:'IT Admin', bob:'HR Officer', charlie:'Developer',
-  diana:'Registrar', eve:'Finance Analyst'
-};
+const AVATAR_PALETTE = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#ef4444','#f59e0b','#ec4899','#14b8a6'];
+function avatarColor(username) {
+  let h = 0;
+  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
 
 let simRunning = false;
 let simInterval = null;
 let simCount = 0;
-let riskHistory = { alice:[], bob:[], charlie:[], diana:[], eve:[] };
+let riskHistory = {};
 
 // Clock
 setInterval(() => {
@@ -654,8 +663,8 @@ async function loadScores() {
     return `<tr data-user="${u.user}" data-score="${u.risk_score}" class="${changed ? 'flash' : ''}">
       <td>
         <div class="u-cell">
-          <div class="av" style="background:${AVATAR_COLORS[u.user]||'#64748b'}">${u.user[0].toUpperCase()}</div>
-          <div><div class="u-name">${u.user}</div><div class="u-role">${USER_ROLES[u.user]||''}</div></div>
+          <div class="av" style="background:${avatarColor(u.user)}">${u.user[0].toUpperCase()}</div>
+          <div><div class="u-name">${u.user}</div><div class="u-role">${(u.role||'').replace(/_/g,' ')}</div></div>
         </div>
       </td>
       <td class="mono-sm" style="color:${scoreColor(u.if_score)}" title="Isolation Forest component score">${u.if_score}</td>
@@ -676,6 +685,9 @@ async function loadScores() {
   updateSparklines(data);
 }
 
+let aiAnalysisCache = {};       // alert id -> {status:'loading'|'done'|'error', available, explanation, recommendation, reason}
+let aiAnalysisExpanded = new Set();
+
 async function loadAlerts() {
   const r = await fetch('/api/alerts');
   const data = await r.json();
@@ -691,6 +703,8 @@ async function loadAlerts() {
         <div class="a-user">${a.user} <span style="font-weight:400;color:var(--muted);font-size:10px">login@${a.login_hour}:00</span></div>
         <div class="a-desc">${a.description}</div>
         <div class="a-time">${ago(i)} · flagged by <b>${a.flagged_by}</b> · score ${a.final_score}</div>
+        <button class="ai-btn" onclick="toggleAiAnalysis(${a.id})">🧠 AI Analysis</button>
+        <div class="ai-panel" id="ai-panel-${a.id}" style="display:none"></div>
       </div>
       <div class="a-sev"><span class="badge ${a.severity}">${a.severity}</span></div>
     </div>
@@ -699,6 +713,49 @@ async function loadAlerts() {
   // mirror into the full-page Alerts view
   document.getElementById('alert-feed-full').innerHTML = document.getElementById('alert-feed').innerHTML;
   document.getElementById('alert-count-full').textContent = data.length + ' alerts';
+
+  // Re-apply any already-expanded / already-fetched AI panels, since the
+  // innerHTML above just rebuilt fresh (collapsed) panel elements.
+  aiAnalysisExpanded.forEach(renderAiPanel);
+}
+
+function renderAiPanel(id) {
+  // Both the sidebar feed and the full-page mirror share this id, so update both.
+  document.querySelectorAll(`#ai-panel-${id}`).forEach(panel => {
+    if (!aiAnalysisExpanded.has(id)) { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    const entry = aiAnalysisCache[id];
+    if (!entry || entry.status === 'loading') {
+      panel.innerHTML = '<div class="ai-loading">Analyzing with local AI model…</div>';
+    } else if (entry.status === 'error' || entry.available === false) {
+      panel.innerHTML = `<div class="ai-unavailable">AI analysis unavailable${entry.reason ? ' — ' + entry.reason : ''}</div>`;
+    } else {
+      panel.innerHTML = `
+        <div class="ai-explain"><b>What this means:</b> ${entry.explanation}</div>
+        <div class="ai-rec"><b>Recommended action:</b> ${entry.recommendation}</div>`;
+    }
+  });
+}
+
+async function toggleAiAnalysis(id) {
+  if (aiAnalysisExpanded.has(id)) {
+    aiAnalysisExpanded.delete(id);
+    renderAiPanel(id);
+    return;
+  }
+  aiAnalysisExpanded.add(id);
+  if (!aiAnalysisCache[id]) {
+    aiAnalysisCache[id] = { status: 'loading' };
+    renderAiPanel(id);
+    try {
+      const r = await fetch(`/api/alerts/${id}/explain`, { method: 'POST' });
+      const data = await r.json();
+      aiAnalysisCache[id] = { status: 'done', ...data };
+    } catch (e) {
+      aiAnalysisCache[id] = { status: 'error' };
+    }
+  }
+  renderAiPanel(id);
 }
 
 function updateSparklines(data) {
@@ -787,7 +844,7 @@ async function reseed() {
   if (simRunning) toggleSim();
   simCount = 0;
   document.getElementById('sb-sim').textContent = 0;
-  riskHistory = { alice:[], bob:[], charlie:[], diana:[], eve:[] };
+  riskHistory = {};
   await fetch('/api/reseed');
   await loadAll();
 }

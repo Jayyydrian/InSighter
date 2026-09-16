@@ -1,4 +1,5 @@
 import random
+import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
@@ -7,13 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from privacy import sanitize_event
 from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
 from database import connect
-from sector_config import (
-    DEFAULT_SECTOR,
-    get_active_sector,
-    get_anomalous_demo_user,
-    get_demo_roster,
-    get_sector_config,
-)
+from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config
 
 # Excluded: no current AD/Google Workspace/Microsoft 365 integration supplies browsing-derived
 # signal; validated as beneficial in CERT evaluation (see cert_score.py), reserved for future browsing integration.
@@ -26,6 +21,7 @@ OCSVM_WEIGHT = 0.4
 CONTAMINATION = 0.08  # expected proportion of anomalous logs, shared by both models
 MIN_ROLE_SAMPLES = 20
 MIN_ROLE_USERS = 2
+MODEL_ESTIMATORS = max(40, int(os.environ.get("INSIGHTER_MODEL_ESTIMATORS", "80")))
 
 
 def _scale_0_100(raw):
@@ -53,7 +49,9 @@ def _fit_group_models(group, score_group=None, contamination=CONTAMINATION, ocsv
     X = scaler.transform(_prepare_model_features(group, feature_list))
     score_X = scaler.transform(_prepare_model_features(score_group, feature_list))
 
-    if_model = IsolationForest(contamination=contamination, random_state=42, n_estimators=200)
+    if_model = IsolationForest(
+        contamination=contamination, random_state=42, n_estimators=MODEL_ESTIMATORS
+    )
     if_model.fit(X)
     if_scores = _scale_0_100(-if_model.decision_function(score_X))
     anomalies = (if_model.predict(score_X) == -1).astype(int)
@@ -181,9 +179,27 @@ def get_recent_alerts():
     alerts["ocsvm_score"] = alerts["ocsvm_score"].round(1)
     alerts["final_score"] = alerts["final_score"].round(1)
 
-    return alerts[["user","login_hour","files_accessed","data_transferred_mb",
+    return alerts[["id","user","role","login_hour","files_accessed","data_transferred_mb",
                    "failed_logins","description","severity",
                    "flagged_by","if_score","ocsvm_score","final_score"]].head(25).to_dict(orient="records")
+
+
+def _live_simulation_roster(conn, sector):
+    """(user, role) pairs the live simulator can draw from for the active sector.
+
+    Prefers whatever users/roles are already seeded in `logs` for this sector
+    (kept in sync with generate_logs()'s round-robin assignment), so the
+    roster always reflects the sector actually configured. Falls back to
+    synthesizing one user per sector role if the table is empty.
+    """
+    roles = get_sector_config(sector)["roles"]
+    rows = conn.execute(
+        "SELECT DISTINCT user, role FROM logs WHERE source = 'synthetic'"
+    ).fetchall()
+    roster = [(r[0], r[1]) for r in rows if r[0] and r[1] and r[1] in roles]
+    if not roster:
+        roster = [(f"user_{i + 1}", role) for i, role in enumerate(roles)] or [("user_1", "unknown")]
+    return roster
 
 
 def inject_live_event():
@@ -197,39 +213,36 @@ def inject_live_event():
     sector = get_active_sector(conn) or DEFAULT_SECTOR
     sector_config = get_sector_config(sector)
     categories = list(sector_config["data_categories"])
-    roster = list(get_demo_roster(sector).items())
-    anomalous_user = get_anomalous_demo_user(sector)
+    roster = _live_simulation_roster(conn, sector)
+    event_number = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
 
     n = len(roster)
-    # The active sector wins immediately; stale rows remain historical and age out,
-    # rather than allowing a previous sector's users to drive new simulation data.
-    weights = [0.4 if user == anomalous_user else 0.6 / (n - 1) for user, _ in roster] if n > 1 else [1.0]
+    # By convention the last roster entry is the "watch" profile for this tick,
+    # analogous to how generate_logs() seeds one elevated-risk account per
+    # sector -- but which (user, role) that is now depends on the sector.
+    weights = [0.4] if n == 1 else [0.6 / (n - 1)] * (n - 1) + [0.4]
     user, role = random.choices(roster, weights=weights)[0]
-    is_watch_profile = user == anomalous_user
+    is_watch_profile = (user, role) == roster[-1]
 
-    roll = random.random()
-    if is_watch_profile:
-        if roll < 0.6:   # anomalous
+    # Use separated burst windows instead of making every watch-user action anomalous.
+    # The occasional non-watch spike keeps the stream representative of a real fleet.
+    watch_burst = event_number % 11 in (0, 1, 2)
+    incidental_spike = event_number % 29 == 0
+    if is_watch_profile and watch_burst:
             row = (user, random.choice([1, 2, 3, 22, 23]),
                    random.randint(55, 130), round(random.uniform(300, 1100), 2),
                    random.randint(4, 10), 1)
             category = categories[-1]
-        else:             # occasionally normal-ish
-            row = (user, random.randint(9, 17),
-                   random.randint(5, 25), round(random.uniform(10, 80), 2),
-                   random.randint(0, 2), 0)
-            category = categories[0]
-    else:
-        if roll < 0.08:  # small chance a non-watch user spikes
+    elif (not is_watch_profile) and incidental_spike:
             row = (user, random.choice([0, 1, 22, 23]),
                    random.randint(30, 60), round(random.uniform(100, 400), 2),
                    random.randint(3, 6), 1)
             category = categories[-1]
-        else:
-            row = (user, random.randint(8, 18),
-                   random.randint(1, 15), round(random.uniform(1, 40), 2),
-                   random.randint(0, 1), 0)
-            category = categories[0]
+    else:
+        row = (user, random.randint(8, 18),
+               random.randint(1, 15), round(random.uniform(1, 40), 2),
+               random.randint(0, 1), 0)
+        category = categories[0]
 
     event = dict(zip(
         ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),

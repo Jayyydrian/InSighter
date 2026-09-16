@@ -1,5 +1,8 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QPushButton
 from PyQt6.QtCore import Qt
+from PyQt6 import sip
+
+from desktop_app.ai_worker import AiAnalysisWorker
 
 SEVERITY_COLORS = {"CRITICAL": "#ef4444", "HIGH": "#ef4444", "MEDIUM": "#f59e0b"}
 
@@ -8,6 +11,8 @@ class AlertsTab(QWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
+        self._ai_workers = set()
+        self._ai_results = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -98,6 +103,20 @@ class AlertsTab(QWidget):
         meta = QLabel(f"Flagged by: {a['flagged_by']}  ·  Blended score: {a['final_score']}")
         meta.setObjectName("muted")
         body.addWidget(meta)
+
+        ai_button = QPushButton("AI Analysis")
+        ai_button.setObjectName("secondary")
+        ai_button.setFixedWidth(110)
+        ai_panel = QLabel("")
+        ai_panel.setWordWrap(True)
+        ai_panel.setObjectName("muted")
+        ai_panel.setVisible(False)
+        ai_button.clicked.connect(
+            lambda: self._request_ai_analysis(a["id"], ai_button, ai_panel)
+        )
+        body.addWidget(ai_button)
+        body.addWidget(ai_panel)
+        self._render_ai_state(a["id"], ai_button, ai_panel)
         layout.addLayout(body, stretch=1)
 
         sev = QLabel(a["severity"])
@@ -109,6 +128,50 @@ class AlertsTab(QWidget):
         card.setLayout(layout)
 
         return card
+
+    def _request_ai_analysis(self, alert_id, button, panel):
+        if self._ai_results.get(alert_id, {}).get("status") == "loading":
+            return
+        self._ai_results[alert_id] = {"status": "loading"}
+        self._render_ai_state(alert_id, button, panel)
+        worker = AiAnalysisWorker(self.client, alert_id)
+        self._ai_workers.add(worker)
+        worker.result_ready.connect(
+            lambda result: self._show_ai_result(alert_id, result, button, panel)
+        )
+        worker.finished.connect(lambda: self._ai_workers.discard(worker))
+        worker.start()
+
+    def _show_ai_result(self, alert_id, result, button, panel):
+        self._ai_results[alert_id] = {
+            "status": "done" if result.get("available") else "error",
+            **result,
+        }
+        if sip.isdeleted(button) or sip.isdeleted(panel):
+            return
+        self._render_ai_state(alert_id, button, panel)
+
+    def _render_ai_state(self, alert_id, button, panel):
+        entry = self._ai_results.get(alert_id)
+        if not entry:
+            button.setEnabled(True)
+            button.setText("AI Analysis")
+            panel.setVisible(False)
+            return
+        button.setEnabled(entry["status"] != "loading")
+        button.setText("Analyzing..." if entry["status"] == "loading" else "Refresh AI Analysis")
+        panel.setVisible(True)
+        if entry["status"] == "loading":
+            panel.setText("Asking the local AI model...")
+        elif entry.get("available"):
+            panel.setText(
+                f"What this means: {entry.get('explanation')}\n"
+                f"Recommended action: {entry.get('recommendation')}"
+            )
+        else:
+            panel.setText(
+                f"AI analysis unavailable: {entry.get('reason', 'Ollama is not running.')}"
+            )
 
     def _recommended_action(self, severity):
         return {

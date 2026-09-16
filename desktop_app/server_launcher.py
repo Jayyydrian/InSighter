@@ -11,6 +11,7 @@ import sys
 import time
 import traceback
 
+import psutil
 import requests
 
 # Make the project root (parent of desktop_app/) importable so `import app` works
@@ -22,6 +23,7 @@ PORT = int(os.environ.get("INSIGHTER_PORT", 5051))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 LOG_FILE = os.path.join(PROJECT_ROOT, "backend_startup_error.log")
 SERVER_LOG = os.path.join(PROJECT_ROOT, "backend_startup.log")
+APP_PY_PATH = os.path.join(PROJECT_ROOT, "app.py")
 
 _server_process = None
 
@@ -40,6 +42,47 @@ def _ping_backend():
         return response.status_code in (200, 302)
     except requests.exceptions.RequestException:
         return False
+
+
+def _current_backend_is_stale():
+    """Return whether the answering backend predates the current app.py."""
+    try:
+        info = requests.get(f"{BASE_URL}/api/_backend-info", timeout=1).json()
+    except (requests.exceptions.RequestException, ValueError):
+        return True
+    on_disk_mtime = os.path.getmtime(APP_PY_PATH)
+    return info.get("app_mtime", 0) < on_disk_mtime - 1
+
+
+def _kill_process_on_port(port, timeout=5):
+    """Best-effort termination of any process bound to the backend port."""
+    killed_any = False
+    try:
+        connections = psutil.net_connections(kind="inet")
+    except (psutil.AccessDenied, PermissionError):
+        print(
+            f"[server_launcher] insufficient privileges to inspect port {port}; "
+            "skipping stale-process cleanup",
+            flush=True,
+        )
+        return False
+    for conn in connections:
+        if conn.laddr and conn.laddr.port == port and conn.pid:
+            try:
+                proc = psutil.Process(conn.pid)
+                print(
+                    f"[server_launcher] stopping stale backend PID {conn.pid} on port {port}",
+                    flush=True,
+                )
+                proc.terminate()
+                killed_any = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    if killed_any:
+        deadline = time.time() + timeout
+        while time.time() < deadline and _ping_backend():
+            time.sleep(0.2)
+    return killed_any
 
 
 def _start_backend_process():
@@ -88,7 +131,14 @@ def ensure_backend_running(timeout=15):
     global _server_process
 
     if _ping_backend():
-        return True
+        if not _current_backend_is_stale():
+            return True
+        print(
+            "[server_launcher] existing backend is running stale code; restarting",
+            flush=True,
+        )
+        _kill_process_on_port(PORT)
+        _server_process = None
 
     if _server_process is None or _server_process.poll() is not None:
         if not _start_backend_process():

@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QButtonGroup, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime, QObject, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QDateTime
 
 from desktop_app.dashboard_tab import DashboardTab
 from desktop_app.profiles_tab import ProfilesTab
@@ -17,7 +17,6 @@ from desktop_app.integrations_tab import IntegrationsTab
 from desktop_app.compliance_tab import ComplianceTab
 
 REFRESH_INTERVAL_MS = 5000
-SIM_INTERVAL_MS = 3000
 
 BG = "#0a0e1a"
 SURFACE = "#111827"
@@ -44,30 +43,11 @@ class _NavItem(QPushButton):
         self.badge = None
 
 
-class _SimulationWorker(QObject):
-    finished = pyqtSignal(bool)
-
-    def __init__(self, client):
-        super().__init__()
-        self.client = client
-
-    def run(self):
-        try:
-            self.client.simulate()
-        except Exception:
-            self.finished.emit(False)
-        else:
-            self.finished.emit(True)
-
-
 class MainWindow(QMainWindow):
     def __init__(self, client, on_logout):
         super().__init__()
         self.client = client
         self.on_logout = on_logout
-        self.sim_running = False
-        self.sim_busy = False
-        self.sim_count = 0
         self.setWindowTitle("InSighter -- Insider Threat Monitoring Console")
         self.resize(1280, 820)
         self._build_ui()
@@ -81,9 +61,6 @@ class MainWindow(QMainWindow):
         self.clock_timer.timeout.connect(self._tick_clock)
         self.clock_timer.start(1000)
         self._tick_clock()
-
-        self.sim_timer = QTimer(self)
-        self.sim_timer.timeout.connect(self._sim_tick)
 
     # -- UI construction -------------------------------------------------
     def _build_ui(self):
@@ -161,11 +138,6 @@ class MainWindow(QMainWindow):
             reseed_btn.clicked.connect(self._reseed)
             h.addWidget(reseed_btn)
 
-            self.sim_btn = QPushButton("\u2b35 Start Simulation")
-            self.sim_btn.setObjectName("primary")
-            self.sim_btn.clicked.connect(self._toggle_simulation)
-            h.addWidget(self.sim_btn)
-
         h.addWidget(self._divider())
         role_label = QLabel(f"{self.client.username} \u00b7 {self.client.role}")
         role_label.setStyleSheet(f"color:{MUTED2}; font-size:11px; font-family:Consolas,monospace;")
@@ -229,7 +201,7 @@ class MainWindow(QMainWindow):
         self._nav_section(layout, "Config")
         integrations_item = _NavItem("\u229e", "Integrations")
         layout.addWidget(integrations_item)
-        settings_item = _NavItem("\u25e7", "Configuration")
+        settings_item = _NavItem("\u25e7", "UAV Configuration")
         layout.addWidget(settings_item)
 
         self.overview_badge = QLabel("0")
@@ -258,7 +230,6 @@ class MainWindow(QMainWindow):
         self.sb_logs = self._sidebar_stat(bottom_layout, "Total Logs")
         self.sb_anom = self._sidebar_stat(bottom_layout, "Anomalies", RED)
         self.sb_users = self._sidebar_stat(bottom_layout, "Users")
-        self.sb_sim = self._sidebar_stat(bottom_layout, "Sim Events", ACCENT)
         layout.addWidget(bottom)
 
         self._nav_pages = {
@@ -369,15 +340,11 @@ class MainWindow(QMainWindow):
         self.clock_label.setText(QDateTime.currentDateTime().toString("HH:mm:ss"))
 
     def _refresh_all(self):
-        if self.sim_busy:
-            return
         self._refresh_active()
         if self.client.role == "admin":
             self._update_sidebar_stats()
 
     def _refresh_active(self):
-        if self.sim_busy:
-            return
         if self.client.role == "management":
             self.summary_tab.refresh()
             return
@@ -399,7 +366,6 @@ class MainWindow(QMainWindow):
         self.sb_logs.setText(str(total_logs))
         self.sb_anom.setText(str(total_anom))
         self.sb_users.setText(str(len(users)))
-        self.sb_sim.setText(str(self.sim_count))
         self.overview_badge.setText(str(high_count))
         self.overview_badge.adjustSize()
         self.overview_badge.move(
@@ -407,9 +373,6 @@ class MainWindow(QMainWindow):
         )
 
     def _reseed(self):
-        if self.sim_running:
-            self._toggle_simulation()
-        self.sim_count = 0
         if hasattr(self, "dashboard_tab"):
             self.dashboard_tab.reset_history()
         try:
@@ -418,43 +381,8 @@ class MainWindow(QMainWindow):
             pass
         self._refresh_all()
 
-    def _toggle_simulation(self):
-        self.sim_running = not self.sim_running
-        if self.sim_running:
-            self.sim_btn.setText("\u23f9 Stop Simulation")
-            self.sim_timer.start(SIM_INTERVAL_MS)
-        else:
-            self.sim_btn.setText("\u2b35 Start Simulation")
-            self.sim_timer.stop()
-
-    def _sim_tick(self):
-        if self.sim_busy:
-            return
-        self.sim_busy = True
-        self.sim_thread = QThread(self)
-        self.sim_worker = _SimulationWorker(self.client)
-        self.sim_worker.moveToThread(self.sim_thread)
-        self.sim_thread.started.connect(self.sim_worker.run)
-        self.sim_worker.finished.connect(self._simulation_finished)
-        self.sim_worker.finished.connect(self.sim_thread.quit)
-        self.sim_worker.finished.connect(self.sim_worker.deleteLater)
-        self.sim_thread.finished.connect(self.sim_thread.deleteLater)
-        self.sim_thread.finished.connect(self._simulation_thread_finished)
-        self.sim_thread.start()
-
-    def _simulation_finished(self, succeeded):
-        if succeeded:
-            self.sim_count += 1
-        self.sim_busy = False
-        self._refresh_all()
-
-    def _simulation_thread_finished(self):
-        self.sim_thread = None
-        self.sim_worker = None
-
     def _logout(self):
         self.timer.stop()
         self.clock_timer.stop()
-        self.sim_timer.stop()
         self.client.logout()
         self.on_logout()

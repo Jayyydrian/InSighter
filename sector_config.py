@@ -5,37 +5,16 @@ SECTORS = {
         "label": "Private School",
         "roles": ("researcher", "intern", "admin_staff", "it_staff"),
         "data_categories": ("projects", "private_documents", "intellectual_property", "pii"),
-        "demo_roster": {
-            "maria": "researcher",
-            "jc": "intern",
-            "liza": "admin_staff",
-            "paolo": "it_staff",
-            "grace": "researcher",
-        },
-        "anomalous_demo_user": "grace",
     },
     "sme_startup": {
         "label": "SME & Startup",
         "roles": ("finance", "hr", "it_admin"),
         "data_categories": ("financial_transactions", "client_data", "employee_records"),
-        "demo_roster": {
-            "alice": "finance",
-            "bob": "hr",
-            "charlie": "it_admin",
-            "diana": "finance",
-            "eve": "it_admin",
-        },
-        "anomalous_demo_user": "eve",
     },
     "uav_disaster_response": {
         "label": "UAV Disaster Response",
         "roles": ("drone_operator",),
         "data_categories": ("drone_platform_access", "disaster_data"),
-        "demo_roster": {
-            "operator1": "drone_operator",
-            "operator2": "drone_operator",
-        },
-        "anomalous_demo_user": "operator2",
     },
 }
 DEFAULT_SECTOR = "sme_startup"
@@ -43,16 +22,6 @@ DEFAULT_SECTOR = "sme_startup"
 
 def get_sector_config(sector=None):
     return SECTORS.get(sector or DEFAULT_SECTOR, SECTORS[DEFAULT_SECTOR])
-
-
-def get_demo_roster(sector=None):
-    """Return the synthetic users and valid roles for a deployment sector."""
-    return dict(get_sector_config(sector)["demo_roster"])
-
-
-def get_anomalous_demo_user(sector=None):
-    """Return the synthetic user whose generated activity trends anomalous."""
-    return get_sector_config(sector)["anomalous_demo_user"]
 
 
 def get_active_sector(conn=None):

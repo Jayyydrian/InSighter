@@ -6,11 +6,14 @@ sparklines, and Runtime Resources panel.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
-    QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea
+    QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QPushButton
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from PyQt6 import sip
 import zlib
+
+from desktop_app.ai_worker import AiAnalysisWorker
 
 RED = "#ef4444"
 YELLOW = "#f59e0b"
@@ -103,6 +106,8 @@ class DashboardTab(QWidget):
         self.history = {}
         self.last_users = []
         self._sparkline_rows = {}
+        self._ai_workers = set()
+        self._ai_results = {}
         self._build_ui()
 
     # -- UI construction --------------------------------------------------
@@ -260,6 +265,17 @@ class DashboardTab(QWidget):
     def refresh(self):
         self._refresh_scores()
         self._refresh_alerts()
+        self._refresh_runtime_status()
+
+    def _refresh_runtime_status(self):
+        try:
+            resources = self.client.get_resources()
+        except Exception:
+            return
+        self.alert_meta.setText(
+            f"{self.alert_meta.property('alert_count') or 0} alerts · "
+            f"{resources.get('events_total', 0)} live events"
+        )
 
     def reset_history(self):
         self.history = {}
@@ -426,6 +442,7 @@ class DashboardTab(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        self.alert_meta.setProperty("alert_count", len(alerts))
         self.alert_meta.setText(f"{len(alerts)} alerts")
 
         if not alerts:
@@ -469,6 +486,19 @@ class DashboardTab(QWidget):
         body.addWidget(user_label)
         body.addWidget(desc)
         body.addWidget(meta)
+        ai_button = QPushButton("AI Analysis")
+        ai_button.setObjectName("secondary")
+        ai_button.setFixedWidth(110)
+        ai_panel = QLabel("")
+        ai_panel.setWordWrap(True)
+        ai_panel.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        ai_panel.setVisible(False)
+        ai_button.clicked.connect(
+            lambda: self._request_ai_analysis(a["id"], ai_button, ai_panel)
+        )
+        body.addWidget(ai_button)
+        body.addWidget(ai_panel)
+        self._render_ai_state(a["id"], ai_button, ai_panel)
         h.addLayout(body, stretch=1)
 
         badge = QLabel(a["severity"])
@@ -479,4 +509,48 @@ class DashboardTab(QWidget):
         h.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
 
         return row
+
+    def _request_ai_analysis(self, alert_id, button, panel):
+        if self._ai_results.get(alert_id, {}).get("status") == "loading":
+            return
+        self._ai_results[alert_id] = {"status": "loading"}
+        self._render_ai_state(alert_id, button, panel)
+        worker = AiAnalysisWorker(self.client, alert_id)
+        self._ai_workers.add(worker)
+        worker.result_ready.connect(
+            lambda result: self._show_ai_result(alert_id, result, button, panel)
+        )
+        worker.finished.connect(lambda: self._ai_workers.discard(worker))
+        worker.start()
+
+    def _show_ai_result(self, alert_id, result, button, panel):
+        self._ai_results[alert_id] = {
+            "status": "done" if result.get("available") else "error",
+            **result,
+        }
+        if sip.isdeleted(button) or sip.isdeleted(panel):
+            return
+        self._render_ai_state(alert_id, button, panel)
+
+    def _render_ai_state(self, alert_id, button, panel):
+        entry = self._ai_results.get(alert_id)
+        if not entry:
+            button.setEnabled(True)
+            button.setText("AI Analysis")
+            panel.setVisible(False)
+            return
+        button.setEnabled(entry["status"] != "loading")
+        button.setText("Analyzing..." if entry["status"] == "loading" else "Refresh AI Analysis")
+        panel.setVisible(True)
+        if entry["status"] == "loading":
+            panel.setText("Asking the local AI model...")
+        elif entry.get("available"):
+            panel.setText(
+                f"What this means: {entry.get('explanation')}\n"
+                f"Recommended action: {entry.get('recommendation')}"
+            )
+        else:
+            panel.setText(
+                f"AI analysis unavailable: {entry.get('reason', 'Ollama is not running.')}"
+            )
 

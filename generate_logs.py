@@ -2,7 +2,7 @@ import random
 
 from database import connect
 from privacy import sanitize_event
-from sector_config import get_active_sector, get_anomalous_demo_user, get_demo_roster, get_sector_config
+from sector_config import get_active_sector, get_sector_config
 
 def generate():
     conn = connect()
@@ -28,16 +28,25 @@ def generate():
     sector_config = get_sector_config(sector)
     roles = list(sector_config["roles"])
     categories = list(sector_config["data_categories"])
-    anomalous_user = get_anomalous_demo_user(sector)
     users = {
-        user: {"role": role, "normal": user != anomalous_user}
-        for user, role in get_demo_roster(sector).items()
+        "alice":   {"normal": True},
+        "bob":     {"normal": True},
+        "charlie": {"normal": True},
+        "diana":   {"normal": True},
+        "eve":     {"normal": False},  # insider threat
     }
+    for index, user in enumerate(users):
+        users[user]["role"] = roles[index % len(roles)]
 
     random.seed(42)
-    for _ in range(300):
+    for event_index in range(300):
         for user, props in users.items():
-            if props["normal"]:
+            # Keep one user trending high-risk, but model realistic activity:
+            # most events are routine and anomalies arrive in short, separated bursts.
+            watch_burst = not props["normal"] and event_index % 17 in (0, 1, 2, 3)
+            incidental_spike = props["normal"] and random.random() < 0.025
+            anomalous = watch_burst or incidental_spike
+            if not anomalous:
                 row = (
                     user,
                     random.randint(8, 18),
@@ -60,7 +69,7 @@ def generate():
                 row,
             ))
             event["role"] = props["role"]
-            event["data_category"] = categories[0 if props["normal"] else -1]
+            event["data_category"] = categories[-1 if anomalous else 0]
             protected = sanitize_event(event, source="synthetic")
             conn.execute(
                 """INSERT INTO logs

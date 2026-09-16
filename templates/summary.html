@@ -54,11 +54,15 @@ table.audit-table tr:last-child td{border-bottom:none}
   <div class="header">
     <div class="logo"><div class="logo-dot"></div><div class="logo-text">InSighter</div></div>
     <div>
-      <span class="role-badge">{{ username }} · management</span>
+      <span class="role-badge">{{ username }} · {{ role }}</span>
       <a class="logout" href="{{ url_for('logout') }}">Log out</a>
     </div>
   </div>
-  <div class="subtitle">Summary Risk Report — aggregate view only, per RBAC policy (individual user activity is restricted to IT administrators)</div>
+  {% if role == 'compliance' %}
+  <div class="subtitle">Privacy-Compliant Audit Mode — flagged records and access history, with real usernames replaced by stable pseudonyms per the Data Privacy Act (R.A. 10173)</div>
+  {% else %}
+  <div class="subtitle">Executive Summary Risk Report — aggregate view only, per RBAC policy (individual user activity is restricted to IT administrators)</div>
+  {% endif %}
 
   <div class="grid">
     <div class="card high">
@@ -75,10 +79,19 @@ table.audit-table tr:last-child td{border-bottom:none}
     </div>
   </div>
 
+  {% if role == 'compliance' %}
   <div class="note">
-    <b>Note:</b> This view intentionally omits usernames, individual risk scores, and behavioral
-    detail, in line with Chapter 3's RBAC design: management personnel receive summary-level
-    reports only, while full per-user access is restricted to IT administrators.
+    <b>Note:</b> Identities below are pseudonymized (stable per-user hashes, not real usernames), in line
+    with Chapter 3's RBAC design: the compliance/HR tier gets flagged-incident and access-history visibility
+    without exposing real employee identities.
+  </div>
+
+  <div class="audit-panel">
+    <div class="audit-head">Flagged Incidents (Pseudonymized)</div>
+    <table class="audit-table">
+      <thead><tr><th>Pseudonym</th><th>Severity</th><th>Risk Score</th><th>Reason</th></tr></thead>
+      <tbody id="flagged-tbody"><tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
   </div>
 
   <div class="audit-panel">
@@ -90,7 +103,19 @@ table.audit-table tr:last-child td{border-bottom:none}
   </div>
 
   <script>
-    fetch('/api/audit-log').then(r => r.json()).then(data => {
+    fetch('/api/compliance/alerts').then(r => r.ok ? r.json() : Promise.reject(r.status)).then(data => {
+      document.getElementById('flagged-tbody').innerHTML = data.length ? data.map(a => `
+        <tr>
+          <td>${a.user}</td>
+          <td><span class="action-tag">${a.severity}</span></td>
+          <td>${a.final_score}</td>
+          <td>${a.description || ''}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">No flagged incidents</td></tr>';
+    }).catch(() => {
+      document.getElementById('flagged-tbody').innerHTML = '<tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">Unable to load flagged incidents</td></tr>';
+    });
+    fetch('/api/compliance/audit-log').then(r => r.ok ? r.json() : Promise.reject(r.status)).then(data => {
       document.getElementById('audit-tbody').innerHTML = data.length ? data.map(a => `
         <tr>
           <td>${a.timestamp}</td>
@@ -99,7 +124,16 @@ table.audit-table tr:last-child td{border-bottom:none}
           <td>${a.detail || ''}</td>
         </tr>
       `).join('') : '<tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">No audit entries yet</td></tr>';
+    }).catch(() => {
+      document.getElementById('audit-tbody').innerHTML = '<tr><td colspan="4" style="padding:16px 20px;color:var(--muted)">Unable to load audit trail</td></tr>';
     });
   </script>
+  {% else %}
+  <div class="note">
+    <b>Note:</b> This view intentionally omits usernames, individual risk scores, and behavioral
+    detail, in line with Chapter 3's RBAC design: management personnel receive summary-level
+    reports only, while full per-user access is restricted to IT administrators.
+  </div>
+  {% endif %}
 </body>
 </html>

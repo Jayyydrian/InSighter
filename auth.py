@@ -13,10 +13,20 @@ Implements the Authentication Tier described in Chapter 3:
 """
 
 import bcrypt
+import hashlib
+import math
+import time
 from functools import wraps
 from flask import session, redirect, url_for, request, render_template
 from database import connect
 from sector_config import DEFAULT_SECTOR, SECTORS
+
+MAX_LOGIN_ATTEMPTS = 3
+LOGIN_COOLDOWN_SECONDS = 60
+DUMMY_PASSWORD_HASH = bcrypt.hashpw(
+    b"insighter-invalid-account-password",
+    bcrypt.gensalt(),
+).decode()
 
 
 def init_users_table():
@@ -86,6 +96,14 @@ def init_users_table():
             timestamp  TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_security (
+            username_key    TEXT PRIMARY KEY,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until    REAL NOT NULL DEFAULT 0,
+            updated_at      TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     row = conn.execute("SELECT COUNT(*) FROM deployment_config").fetchone()[0]
     if row == 0:
         conn.execute("INSERT INTO deployment_config (id, sector) VALUES (1, ?)", (DEFAULT_SECTOR,))
@@ -123,18 +141,53 @@ def log_action(username, action, detail=""):
 
 def verify_login(username, password):
     """Return the user's role if credentials are valid, else None."""
+    role, _ = authenticate_login(username, password)
+    return role
+
+
+def _login_username_key(username):
+    return hashlib.sha256(username.casefold().encode("utf-8")).hexdigest()
+
+
+def authenticate_login(username, password):
+    """Return ``(role, retry_after)`` while enforcing the login cooldown policy."""
+    username_key = _login_username_key(username)
+    now = time.time()
     conn = connect()
+    security = conn.execute(
+        "SELECT failed_attempts, locked_until FROM login_security WHERE username_key = ?",
+        (username_key,),
+    ).fetchone()
+    if security and security[1] > now:
+        retry_after = max(1, math.ceil(security[1] - now))
+        conn.close()
+        return None, retry_after
+
     row = conn.execute(
         "SELECT password_hash, role FROM users WHERE username = ?", (username,)
     ).fetchone()
-    conn.close()
+    pw_hash = row[0] if row else DUMMY_PASSWORD_HASH
+    valid = bcrypt.checkpw(password.encode(), pw_hash.encode()) if row else False
+    if valid:
+        conn.execute("DELETE FROM login_security WHERE username_key = ?", (username_key,))
+        conn.commit()
+        conn.close()
+        return row[1], None
 
-    if row is None:
-        return None
-    pw_hash, role = row
-    if bcrypt.checkpw(password.encode(), pw_hash.encode()):
-        return role
-    return None
+    failed_attempts = (security[0] if security else 0) + 1
+    locked_until = now + LOGIN_COOLDOWN_SECONDS if failed_attempts >= MAX_LOGIN_ATTEMPTS else 0
+    conn.execute(
+        """INSERT INTO login_security (username_key, failed_attempts, locked_until)
+           VALUES (?, ?, ?)
+           ON CONFLICT(username_key) DO UPDATE SET
+             failed_attempts = excluded.failed_attempts,
+             locked_until = excluded.locked_until,
+             updated_at = CURRENT_TIMESTAMP""",
+        (username_key, failed_attempts, locked_until),
+    )
+    conn.commit()
+    conn.close()
+    return None, LOGIN_COOLDOWN_SECONDS if locked_until else None
 
 
 def login_required(view_func):

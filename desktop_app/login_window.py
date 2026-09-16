@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from desktop_app.api_client import ApiClient
+from desktop_app.api_client import ApiClient, ApiError
 
 
 class LoginWindow(QWidget):
@@ -101,6 +101,9 @@ class LoginWindow(QWidget):
 
         try:
             success = self.client.login(username, password)
+        except ApiError as exc:
+            success = False
+            self.error_label.setText(exc.message)
         except Exception as exc:
             success = False
             self.error_label.setText(f"Could not reach backend: {exc}")
