@@ -12,21 +12,14 @@ except ImportError:
 
 from database import connect
 from privacy import sanitize_event
-from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, role_allowed
-
-# Same fixed demo usernames generate_logs() seeds, in the same order, so
-# legacy rows can be backfilled with a role from whatever sector is active.
-_DEMO_USER_ORDER = ["alice", "bob", "charlie", "diana", "eve"]
+from sector_config import (
+    DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster, role_allowed,
+)
 
 
 def _default_role_for_user(user, sector):
-    """Best-effort role for a legacy row, using generate_logs()'s round-robin
-    convention against the *active sector's* role taxonomy (instead of a
-    fixed, sector-agnostic job title)."""
-    roles = get_sector_config(sector)["roles"]
-    if user not in _DEMO_USER_ORDER or not roles:
-        return None
-    return roles[_DEMO_USER_ORDER.index(user) % len(roles)]
+    """Best-effort role lookup for users in the generated sector roster."""
+    return dict((username, role) for username, role in get_sector_roster(sector)).get(user)
 
 
 def ensure_logs_schema():

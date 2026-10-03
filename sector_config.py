@@ -4,16 +4,19 @@ SECTORS = {
     "private_school": {
         "label": "Private School",
         "roles": ("researcher", "intern", "admin_staff", "it_staff"),
+        "roster_distribution": {"researcher": 5, "intern": 3, "admin_staff": 2, "it_staff": 2},
         "data_categories": ("projects", "private_documents", "intellectual_property", "pii"),
     },
     "sme_startup": {
         "label": "SME & Startup",
         "roles": ("finance", "hr", "it_admin"),
+        "roster_distribution": {"finance": 8, "hr": 6, "it_admin": 6},
         "data_categories": ("financial_transactions", "client_data", "employee_records"),
     },
     "uav_disaster_response": {
         "label": "UAV Disaster Response",
         "roles": ("drone_operator",),
+        "roster_distribution": {"drone_operator": 6},
         "data_categories": ("drone_platform_access", "disaster_data"),
     },
 }
@@ -22,6 +25,16 @@ DEFAULT_SECTOR = "sme_startup"
 
 def get_sector_config(sector=None):
     return SECTORS.get(sector or DEFAULT_SECTOR, SECTORS[DEFAULT_SECTOR])
+
+
+def get_sector_roster(sector=None):
+    """Generate the canonical synthetic (username, role) roster for a sector."""
+    config = get_sector_config(sector)
+    roster = []
+    for role in config["roles"]:
+        count = config["roster_distribution"].get(role, 0)
+        roster.extend((f"{role}_{index:02d}", role) for index in range(1, count + 1))
+    return roster
 
 
 def get_active_sector(conn=None):

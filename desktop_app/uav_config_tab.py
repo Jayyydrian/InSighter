@@ -21,7 +21,10 @@ class UavConfigTab(QWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
+        self._refreshing = True
+        self._sector_dirty = False
         self._build_ui()
+        self._refreshing = False
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -156,10 +159,12 @@ class UavConfigTab(QWidget):
         except Exception:
             return
 
-        index = self.sector.findData(cfg.get("sector", "sme_startup"))
-        self.sector.setCurrentIndex(index if index >= 0 else 1)
-        taxonomy = cfg.get("taxonomy", {})
-        self._set_taxonomy(taxonomy)
+        if not self._sector_dirty:
+            index = self.sector.findData(cfg.get("sector", "sme_startup"))
+            self._refreshing = True
+            self.sector.setCurrentIndex(index if index >= 0 else 1)
+            self._refreshing = False
+            self._set_taxonomy(cfg.get("taxonomy", {}))
         self.threshold_high.setValue(cfg["threshold_high"])
         self.threshold_medium.setValue(cfg["threshold_medium"])
         self.sync_interval.setValue(cfg["sync_interval_minutes"])
@@ -190,6 +195,7 @@ class UavConfigTab(QWidget):
         }
         try:
             self.client.save_deployment_config(payload)
+            self._sector_dirty = False
             self.status_label.setText("Saved.")
             self.status_label.setStyleSheet("color:#22c55e; font-size:12px;")
             self.drone_password.clear()
@@ -204,6 +210,8 @@ class UavConfigTab(QWidget):
 
     def _sector_changed(self):
         sector = self.sector.currentData()
+        if not self._refreshing:
+            self._sector_dirty = True
         labels = dict(self.sector_options)
         mappings = {
             "private_school": ["researcher", "intern", "admin_staff", "it_staff"],

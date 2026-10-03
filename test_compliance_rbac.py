@@ -1,10 +1,16 @@
 import os
 import tempfile
 import unittest
+from contextlib import closing
+
+import database
 
 DB_PATH = tempfile.mktemp(suffix=".db")
 os.environ["INSIGHTER_DB_PATH"] = DB_PATH
+os.environ["INSIGHTER_DISABLE_BACKGROUND_SIM"] = "1"
 
+from auth import init_users_table
+from generate_logs import generate
 import app
 from privacy import hash_identifier
 
@@ -12,6 +18,16 @@ from privacy import hash_identifier
 class ComplianceRbacTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.previous_database_path = database.DB_PATH
+        database.DB_PATH = DB_PATH
+        init_users_table()
+        generate()
+        with closing(database.connect()) as conn:
+            conn.execute(
+                "INSERT INTO logs (user, role, data_category) VALUES (?,?,?)",
+                ("alice", "finance", "financial_transactions"),
+            )
+            conn.commit()
         cls.original_alerts = app.get_recent_alerts
         app.get_recent_alerts = lambda: [{
             "user": "alice",
@@ -31,6 +47,7 @@ class ComplianceRbacTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         app.get_recent_alerts = cls.original_alerts
+        database.DB_PATH = cls.previous_database_path
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
 

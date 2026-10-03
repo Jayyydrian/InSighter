@@ -56,6 +56,9 @@ class ApiClient:
     def get_scores(self):
         return self._get("/api/scores")
 
+    def get_active_taxonomy(self):
+        return self._get("/api/deployment-config/taxonomy")
+
     def get_alerts(self):
         return self._get("/api/alerts")
 

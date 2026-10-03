@@ -8,7 +8,8 @@ from sklearn.preprocessing import StandardScaler
 from privacy import sanitize_event
 from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
 from database import connect
-from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config
+from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster
+from simulation import activity_values
 
 # Excluded: no current AD/Google Workspace/Microsoft 365 integration supplies browsing-derived
 # signal; validated as beneficial in CERT evaluation (see cert_score.py), reserved for future browsing integration.
@@ -22,15 +23,25 @@ CONTAMINATION = 0.08  # expected proportion of anomalous logs, shared by both mo
 MIN_ROLE_SAMPLES = 20
 MIN_ROLE_USERS = 2
 MODEL_ESTIMATORS = max(40, int(os.environ.get("INSIGHTER_MODEL_ESTIMATORS", "80")))
+CALIBRATION_LOW_QUANTILE = 0.05
+CALIBRATION_HIGH_QUANTILE = 0.95
 
 
-def _scale_0_100(raw):
-    """Min-max scale a raw anomaly-score array to a 0-100 range (100 = most anomalous)."""
+def _scale_0_100(raw, reference=None):
+    """Calibrate anomaly scores against a reference distribution on a 0-100 scale."""
     raw = np.asarray(raw, dtype=float)
-    lo, hi = raw.min(), raw.max()
+    reference = raw if reference is None else np.asarray(reference, dtype=float)
+    if raw.size == 0 or reference.size == 0:
+        return np.zeros_like(raw)
+    lo, hi = np.quantile(
+        reference,
+        [CALIBRATION_LOW_QUANTILE, CALIBRATION_HIGH_QUANTILE],
+    )
+    if hi - lo < 1e-9:
+        lo, hi = reference.min(), reference.max()
     if hi - lo < 1e-9:
         return np.zeros_like(raw)
-    return (raw - lo) / (hi - lo) * 100
+    return np.clip((raw - lo) / (hi - lo) * 100, 0, 100)
 
 
 def _prepare_model_features(frame, feature_list=None):
@@ -53,12 +64,14 @@ def _fit_group_models(group, score_group=None, contamination=CONTAMINATION, ocsv
         contamination=contamination, random_state=42, n_estimators=MODEL_ESTIMATORS
     )
     if_model.fit(X)
-    if_scores = _scale_0_100(-if_model.decision_function(score_X))
+    if_reference = -if_model.decision_function(X)
+    if_scores = _scale_0_100(-if_model.decision_function(score_X), if_reference)
     anomalies = (if_model.predict(score_X) == -1).astype(int)
 
     ocsvm_model = OneClassSVM(kernel="rbf", nu=ocsvm_nu or contamination, gamma="auto")
     ocsvm_model.fit(X)
-    ocsvm_scores = _scale_0_100(-ocsvm_model.decision_function(score_X))
+    ocsvm_reference = -ocsvm_model.decision_function(X)
+    ocsvm_scores = _scale_0_100(-ocsvm_model.decision_function(score_X), ocsvm_reference)
     return if_scores, anomalies, ocsvm_scores
 
 
@@ -98,9 +111,16 @@ def _run_ensemble(df, contamination=CONTAMINATION, ocsvm_nu=None, fit_df=None, f
 
 
 def score_users():
+    sector = get_active_sector() or DEFAULT_SECTOR
+    allowed_roles = set(get_sector_config(sector)["roles"])
     conn = connect()
     df = pd.read_sql("SELECT * FROM logs", conn)
     conn.close()
+
+    if "role" in df.columns:
+        df = df[df["role"].isin(allowed_roles)].copy()
+    if df.empty:
+        return []
 
     df = _run_ensemble(df)
 
@@ -133,9 +153,17 @@ def score_users():
 
 
 def get_recent_alerts():
+    sector = get_active_sector() or DEFAULT_SECTOR
+    sector_config = get_sector_config(sector)
+    allowed_roles = set(sector_config["roles"])
     conn = connect()
     df = pd.read_sql("SELECT * FROM logs ORDER BY id DESC LIMIT 600", conn)
     conn.close()
+
+    if "role" in df.columns:
+        df = df[df["role"].isin(allowed_roles)].copy()
+    if df.empty:
+        return []
 
     df = _run_ensemble(df)
     # An alert fires if either model treats the row as anomalous, or the blended score is high
@@ -148,13 +176,16 @@ def get_recent_alerts():
     def describe(row):
         r = []
         if row["login_hour"] < 6 or row["login_hour"] > 21:
-            r.append("off-hours login")
+            r.append("off-hours mission-console access" if sector == "uav_disaster_response" else "off-hours login")
         if row["files_accessed"] > 40:
-            r.append(f"accessed {int(row['files_accessed'])} files")
+            noun = "disaster survivor records" if sector == "uav_disaster_response" else "files"
+            r.append(f"accessed {int(row['files_accessed'])} {noun}")
         if row["data_transferred_mb"] > 200:
-            r.append(f"transferred {row['data_transferred_mb']:.0f} MB")
+            noun = "of triage data" if sector == "uav_disaster_response" else ""
+            r.append(f"transferred {row['data_transferred_mb']:.0f} MB {noun}".strip())
         if row["failed_logins"] > 3:
-            r.append(f"{int(row['failed_logins'])} failed logins")
+            noun = "mission-control authentication attempts" if sector == "uav_disaster_response" else "failed logins"
+            r.append(f"{int(row['failed_logins'])} {noun}")
         return ", ".join(r) if r else "unusual activity pattern"
 
     alerts = alerts.copy()
@@ -179,70 +210,32 @@ def get_recent_alerts():
     alerts["ocsvm_score"] = alerts["ocsvm_score"].round(1)
     alerts["final_score"] = alerts["final_score"].round(1)
 
-    return alerts[["id","user","role","login_hour","files_accessed","data_transferred_mb",
+    return alerts[["id","user","role","login_hour","off_hours_access","data_category","files_accessed","data_transferred_mb",
                    "failed_logins","description","severity",
                    "flagged_by","if_score","ocsvm_score","final_score"]].head(25).to_dict(orient="records")
 
 
 def _live_simulation_roster(conn, sector):
-    """(user, role) pairs the live simulator can draw from for the active sector.
-
-    Prefers whatever users/roles are already seeded in `logs` for this sector
-    (kept in sync with generate_logs()'s round-robin assignment), so the
-    roster always reflects the sector actually configured. Falls back to
-    synthesizing one user per sector role if the table is empty.
-    """
-    roles = get_sector_config(sector)["roles"]
-    rows = conn.execute(
-        "SELECT DISTINCT user, role FROM logs WHERE source = 'synthetic'"
-    ).fetchall()
-    roster = [(r[0], r[1]) for r in rows if r[0] and r[1] and r[1] in roles]
-    if not roster:
-        roster = [(f"user_{i + 1}", role) for i, role in enumerate(roles)] or [("user_1", "unknown")]
-    return roster
+    """Return the canonical generated roster, independent of stale stored rows."""
+    return get_sector_roster(sector)
 
 
 def inject_live_event():
     """Randomly inject a new log row to simulate live fluctuation.
 
-    The roster and the "high-risk" profile it weights toward are both
-    derived from the active sector's configuration, rather than a fixed
-    cast of demo usernames.
+    The roster and sector-specific activity profile are derived from the
+    active sector; anomalous behavior is selected probabilistically per tick.
     """
     conn = connect()
     sector = get_active_sector(conn) or DEFAULT_SECTOR
     sector_config = get_sector_config(sector)
     categories = list(sector_config["data_categories"])
     roster = _live_simulation_roster(conn, sector)
-    event_number = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
-
-    n = len(roster)
-    # By convention the last roster entry is the "watch" profile for this tick,
-    # analogous to how generate_logs() seeds one elevated-risk account per
-    # sector -- but which (user, role) that is now depends on the sector.
-    weights = [0.4] if n == 1 else [0.6 / (n - 1)] * (n - 1) + [0.4]
-    user, role = random.choices(roster, weights=weights)[0]
-    is_watch_profile = (user, role) == roster[-1]
-
-    # Use separated burst windows instead of making every watch-user action anomalous.
-    # The occasional non-watch spike keeps the stream representative of a real fleet.
-    watch_burst = event_number % 11 in (0, 1, 2)
-    incidental_spike = event_number % 29 == 0
-    if is_watch_profile and watch_burst:
-            row = (user, random.choice([1, 2, 3, 22, 23]),
-                   random.randint(55, 130), round(random.uniform(300, 1100), 2),
-                   random.randint(4, 10), 1)
-            category = categories[-1]
-    elif (not is_watch_profile) and incidental_spike:
-            row = (user, random.choice([0, 1, 22, 23]),
-                   random.randint(30, 60), round(random.uniform(100, 400), 2),
-                   random.randint(3, 6), 1)
-            category = categories[-1]
-    else:
-        row = (user, random.randint(8, 18),
-               random.randint(1, 15), round(random.uniform(1, 40), 2),
-               random.randint(0, 1), 0)
-        category = categories[0]
+    user, role = random.choice(roster)
+    anomalous = random.random() < 0.25
+    values = activity_values(sector, anomalous, random)
+    row = (user, *values)
+    category = categories[-1 if anomalous else 0]
 
     event = dict(zip(
         ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
@@ -262,3 +255,12 @@ def inject_live_event():
     )
     conn.commit()
     conn.close()
+    return {
+        "user": user,
+        "role": role,
+        "anomalous": anomalous,
+        "activity": dict(zip(
+            ("login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
+            values,
+        )),
+    }

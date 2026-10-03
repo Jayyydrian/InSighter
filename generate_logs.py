@@ -2,7 +2,10 @@ import random
 
 from database import connect
 from privacy import sanitize_event
-from sector_config import get_active_sector, get_sector_config
+from sector_config import get_active_sector, get_sector_config, get_sector_roster
+from simulation import activity_values
+
+EVENTS_PER_USER = 120
 
 def generate():
     conn = connect()
@@ -26,49 +29,19 @@ def generate():
 
     sector = get_active_sector(conn)
     sector_config = get_sector_config(sector)
-    roles = list(sector_config["roles"])
     categories = list(sector_config["data_categories"])
-    users = {
-        "alice":   {"normal": True},
-        "bob":     {"normal": True},
-        "charlie": {"normal": True},
-        "diana":   {"normal": True},
-        "eve":     {"normal": False},  # insider threat
-    }
-    for index, user in enumerate(users):
-        users[user]["role"] = roles[index % len(roles)]
+    users = get_sector_roster(sector)
 
-    random.seed(42)
-    for event_index in range(300):
-        for user, props in users.items():
-            # Keep one user trending high-risk, but model realistic activity:
-            # most events are routine and anomalies arrive in short, separated bursts.
-            watch_burst = not props["normal"] and event_index % 17 in (0, 1, 2, 3)
-            incidental_spike = props["normal"] and random.random() < 0.025
-            anomalous = watch_burst or incidental_spike
-            if not anomalous:
-                row = (
-                    user,
-                    random.randint(8, 18),
-                    random.randint(1, 15),
-                    round(random.uniform(1, 40), 2),
-                    random.randint(0, 1),
-                    0
-                )
-            else:
-                row = (
-                    user,
-                    random.choice([random.randint(0, 5), random.randint(20, 23)]),
-                    random.randint(60, 120),
-                    round(random.uniform(400, 1000), 2),
-                    random.randint(4, 10),
-                    1
-                )
+    rng = random.Random(42)
+    for _ in range(EVENTS_PER_USER):
+        for user, role in users:
+            anomalous = rng.random() < 0.045
+            row = (user, *activity_values(sector, anomalous, rng))
             event = dict(zip(
                 ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
                 row,
             ))
-            event["role"] = props["role"]
+            event["role"] = role
             event["data_category"] = categories[-1 if anomalous else 0]
             protected = sanitize_event(event, source="synthetic")
             conn.execute(
@@ -85,7 +58,7 @@ def generate():
 
     conn.commit()
     conn.close()
-    print("✅  database.db seeded with 1500 log entries.")
+    print(f"Seeded database with {EVENTS_PER_USER * len(users)} log entries for {sector}.")
 
 if __name__ == "__main__":
     generate()

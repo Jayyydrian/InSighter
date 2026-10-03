@@ -209,14 +209,14 @@ def reseed():
 @app.route("/api/simulate")
 @admin_required
 def simulate():
-    _run_simulation_tick()
-    return jsonify({"status": "ok"})
+    simulation_event = _run_simulation_tick()
+    return jsonify({"status": "ok", **simulation_event})
 
 
 def _run_simulation_tick():
     # DB write
     t0 = time.perf_counter()
-    inject_live_event()
+    simulation_event = inject_live_event()
     db_write_ms = (time.perf_counter() - t0) * 1000
 
     # DB read + ML inference
@@ -242,6 +242,7 @@ def _run_simulation_tick():
     ml_ms = (time.perf_counter() - t2) * 1000
 
     record_tick(ml_ms, db_read_ms, db_write_ms)
+    return simulation_event
 
 
 def _background_simulation_loop(interval_seconds):

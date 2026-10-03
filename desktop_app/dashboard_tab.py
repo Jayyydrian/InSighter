@@ -106,6 +106,7 @@ class DashboardTab(QWidget):
         self.history = {}
         self.last_users = []
         self._sparkline_rows = {}
+        self._sparkline_widgets = {}
         self._ai_workers = set()
         self._ai_results = {}
         self._build_ui()
@@ -216,11 +217,19 @@ class DashboardTab(QWidget):
     def _build_sparkline_panel(self):
         panel, layout, _ = _panel("Risk History (last 20 ticks)", GREEN, "auto-updates with simulation")
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll.setMinimumHeight(160)
+        scroll.setMaximumHeight(260)
+
         self.sparkline_container = QWidget()
         self.sparkline_layout = QVBoxLayout(self.sparkline_container)
         self.sparkline_layout.setContentsMargins(16, 12, 16, 14)
         self.sparkline_layout.setSpacing(10)
-        layout.addWidget(self.sparkline_container)
+        scroll.setWidget(self.sparkline_container)
+        layout.addWidget(scroll)
 
         # Rows are added lazily in _ensure_sparkline_row() once we know which
         # users the active sector/roster actually returns.
@@ -231,6 +240,7 @@ class DashboardTab(QWidget):
             row_widget, bars_layout, val_label = self._make_sparkline_row(user)
             self.sparkline_layout.addWidget(row_widget)
             self._sparkline_rows[user] = (bars_layout, val_label)
+            self._sparkline_widgets[user] = row_widget
         return self._sparkline_rows[user]
 
     def _make_sparkline_row(self, user):
@@ -240,7 +250,7 @@ class DashboardTab(QWidget):
         h.setSpacing(10)
 
         label = QLabel(user)
-        label.setFixedWidth(65)
+        label.setFixedWidth(120)
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setStyleSheet(f"color:{MUTED2}; font-size:11px;")
 
@@ -284,6 +294,7 @@ class DashboardTab(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self._sparkline_rows = {}
+        self._sparkline_widgets = {}
 
     def _refresh_scores(self):
         try:
@@ -292,6 +303,14 @@ class DashboardTab(QWidget):
             return
 
         self.last_users = users
+        active_users = {user["user"] for user in users}
+        for stale_user in set(self.history) - active_users:
+            self.history.pop(stale_user, None)
+            self._sparkline_rows.pop(stale_user, None)
+            widget = self._sparkline_widgets.pop(stale_user, None)
+            if widget:
+                self.sparkline_layout.removeWidget(widget)
+                widget.deleteLater()
 
         counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for u in users:

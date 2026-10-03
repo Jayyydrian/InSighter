@@ -57,12 +57,15 @@ class RoleSessionsTab(QWidget):
     def refresh(self):
         try:
             scores = self.client.get_scores()
+            allowed_roles = set(self.client.get_active_taxonomy().get("roles", []))
         except Exception:
             return
 
         grouped = defaultdict(list)
         for user in scores:
-            grouped[user.get("role", "unknown") or "unknown"].append(user)
+            role = user.get("role", "unknown") or "unknown"
+            if role in allowed_roles:
+                grouped[role].append(user)
 
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)

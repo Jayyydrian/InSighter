@@ -7,10 +7,10 @@ Runs locally in under 2 minutes.
 
 ## What it does
 
-- Generates 1,500 fake user activity logs (5 users, one insider)
+- Generates synthetic activity logs from the active sector's roster
 - Runs Isolation Forest anomaly detection on each user's behavior
 - Displays a live risk dashboard with scores, alerts, and charts
-- "Eve" is the simulated insider — she will score HIGH risk
+- Rotates simulated anomalous activity across users instead of assigning one fixed insider identity
 
 ---
 
@@ -28,15 +28,15 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 
 ## What it does
 
-- Generates 1,500 fake user activity logs (5 users, one insider)
+- Generates sector-specific synthetic activity for 12 private-school users, 20 SME/startup users, or 6 UAV disaster-response operators
 - Runs Isolation Forest + One-Class SVM (weighted 0.6/0.4 ensemble) on each user's behavior
 - Builds role-aware behavioral baselines and adds baseline deviation to risk scores
+- Varies anomalous and routine activity per live simulation tick; UAV simulation uses mission-appropriate numeric profiles and alert language
 - Accepts protected events from a configured REST API through the desktop Integrations page
 - Hashes identifiers and encrypts non-identity event payloads before storage
 - Uses SQLCipher encryption automatically when `sqlcipher3` is installed, with SQLite fallback for development
 - Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
 - Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
-- "Eve" is the simulated insider — she will score HIGH risk
 
 ---
 
@@ -55,6 +55,19 @@ PyQt6 login window. Log in with:
 | admin    | admin123    | admin        | Full: dashboard, profiles, alerts, UAV config |
 | manager  | manager123  | management   | Summary counts only              |
 | hr_officer | hr_officer123 | compliance | Flagged records and audit trail with pseudonymous identities |
+
+### Local AI Analysis
+
+Install Ollama, start its local service, then pull the default explanation model:
+
+```bash
+ollama pull phi4-mini
+```
+
+The AI Analysis button uses `phi4-mini` by default. Set `INSIGHTER_LLM_MODEL` to use a
+different local model; the legacy `INSIGHTER_OLLAMA_MODEL` variable remains a fallback
+override. The production request timeout defaults to 30 seconds and can be changed with
+`INSIGHTER_OLLAMA_TIMEOUT_SECONDS`.
 
 ---
 
