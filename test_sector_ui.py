@@ -29,10 +29,56 @@ class SectorViewTest(unittest.TestCase):
         tab = RoleSessionsTab(SectorViewClient())
         tab.refresh()
 
-        labels = [label.text() for label in tab.findChildren(QLabel)]
-        self.assertIn("Drone_Operator", labels)
-        self.assertNotIn("Researcher", labels)
-        self.assertEqual(tab.count_label.text(), "1 users · 1 roles")
+        self.assertEqual(tab.table.columnCount(), 2)
+        self.assertEqual(
+            [tab.table.horizontalHeaderItem(column).text() for column in range(2)],
+            ["User", "Risk Level"],
+        )
+        self.assertEqual(tab.table.rowCount(), 1)
+        self.assertEqual(tab.table.item(0, 0).text(), "drone_operator_01")
+        self.assertEqual(tab.count_label.text(), "1 user")
+        self.assertTrue(tab.details_widget.isHidden())
+
+    def test_clicking_risk_level_displays_user_details(self):
+        tab = RoleSessionsTab(SectorViewClient())
+        tab.refresh()
+
+        tab.table.cellClicked.emit(0, 1)
+
+        self.assertFalse(tab.details_widget.isHidden())
+        self.assertIn("Risk score: 70%", tab.details_summary.text())
+        self.assertIn("Role: Drone Operator", tab.details_summary.text())
+        self.assertIn("Role baseline deviation: 20", tab.details_summary.text())
+        self.assertIn("Avg files accessed: 50", tab.details_summary.text())
+        self.assertIn("Avg transfer: 100 MB", tab.details_summary.text())
+
+    def test_role_behavior_filters_and_risk_score_sorting(self):
+        class AllRolesClient(SectorViewClient):
+            def get_active_taxonomy(self):
+                return {"roles": ["researcher", "drone_operator"]}
+
+        tab = RoleSessionsTab(AllRolesClient())
+        tab.refresh()
+
+        tab.risk_filter.setCurrentIndex(tab.risk_filter.findData("HIGH"))
+        self.assertEqual(tab.table.rowCount(), 1)
+        self.assertEqual(tab.table.item(0, 0).text(), "drone_operator_01")
+
+        tab.risk_filter.setCurrentIndex(0)
+        tab.user_filter.setCurrentIndex(tab.user_filter.findData("researcher_01"))
+        self.assertEqual(tab.table.rowCount(), 1)
+        self.assertEqual(tab.table.item(0, 0).text(), "researcher_01")
+
+        tab.user_filter.setCurrentIndex(0)
+        tab.search_input.setText("drone")
+        self.assertEqual(tab.table.rowCount(), 1)
+        self.assertEqual(tab.table.item(0, 0).text(), "drone_operator_01")
+
+        tab.search_input.clear()
+        tab.sort_order.setCurrentIndex(tab.sort_order.findData("descending"))
+        self.assertEqual(tab.table.item(0, 0).text(), "drone_operator_01")
+        tab.sort_order.setCurrentIndex(tab.sort_order.findData("ascending"))
+        self.assertEqual(tab.table.item(0, 0).text(), "researcher_01")
 
     def test_dashboard_history_scrolls_with_twenty_users(self):
         tab = DashboardTab(SectorViewClient())
