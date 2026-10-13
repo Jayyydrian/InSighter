@@ -66,8 +66,36 @@ ollama pull phi4-mini
 
 The AI Analysis button uses `phi4-mini` by default. Set `INSIGHTER_LLM_MODEL` to use a
 different local model; the legacy `INSIGHTER_OLLAMA_MODEL` variable remains a fallback
-override. The production request timeout defaults to 30 seconds and can be changed with
-`INSIGHTER_OLLAMA_TIMEOUT_SECONDS`.
+override.
+
+### Local LLM performance
+
+The backend warms the configured model in a daemon thread at startup. It does not delay
+the server becoming available; set `INSIGHTER_LLM_WARMUP=0` to disable it. Warm-up waits
+up to 120 seconds by default (`INSIGHTER_LLM_WARMUP_TIMEOUT`) and can also be disabled
+along with other background work by setting `INSIGHTER_DISABLE_BACKGROUND_SIM=1`.
+
+Ollama's request timeout is configurable with `INSIGHTER_LLM_TIMEOUT` (90 seconds by
+default, with a 3-second connection timeout). The former
+`INSIGHTER_OLLAMA_TIMEOUT_SECONDS` remains a fallback for existing configurations.
+The desktop's `INSIGHTER_AI_TIMEOUT` defaults to 120 seconds and is automatically kept at
+least 30 seconds above the configured server timeout. You can raise it further if desired.
+
+Generation settings are `INSIGHTER_LLM_NUM_CTX` (2048 tokens by default),
+`INSIGHTER_LLM_MAX_TOKENS` (256), and `INSIGHTER_LLM_KEEP_ALIVE` (`30m`). The normal
+generated system and alert prompt together currently use about 1,370 tokens at the
+longest observed alert, leaving space for generation in the default context.
+Check `prompt_eval_count` for several real alerts in `llm_usage_log.jsonl`. If counts
+approach 1,700, raise `INSIGHTER_LLM_NUM_CTX` to `3072`; a context that is too small
+can truncate the beginning of the prompt, including its safety rules.
+
+For best speed, check `ollama ps` and aim for `100% GPU`. If Ollama reports CPU usage,
+lower `INSIGHTER_LLM_NUM_CTX`, close GPU-heavy apps, or optionally set
+`OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` **before starting Ollama**.
+These two `OLLAMA_*` variables configure the Ollama server, not InSighter. During demos,
+`INSIGHTER_DISABLE_BACKGROUND_SIM=1` also frees CPU by disabling background simulation.
+The first request after a long idle may take longer while Ollama reloads the model. For
+demos, set `INSIGHTER_LLM_KEEP_ALIVE=2h` to keep it loaded longer.
 
 ---
 
@@ -223,4 +251,3 @@ Eve exhibits: off-hours logins, excessive file access, large data transfers, rep
 - **SQLite** — log & user storage
 - **cryptography** — protected event payloads
 - **Vanilla HTML/CSS/JS** — web dashboard alternative (no extra installs)
-

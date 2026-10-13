@@ -719,14 +719,18 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         with patch("llm_advisor.requests.post", side_effect=requests.exceptions.Timeout()):
             result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
         self.assertFalse(result["available"])
-        self.assertIn("timed out", result["reason"])
+        self.assertIn("did not answer within", result["reason"])
 
     def test_model_not_found_is_graceful(self):
         resp = MagicMock(status_code=404, ok=False)
         with patch("llm_advisor.requests.post", return_value=resp):
             result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
         self.assertFalse(result["available"])
-        self.assertIn("not found", result["reason"])
+        self.assertEqual(
+            result["reason"],
+            f"Model '{llm_advisor.OLLAMA_MODEL}' is not installed. "
+            f"Run: ollama pull {llm_advisor.OLLAMA_MODEL}",
+        )
 
     def test_malformed_model_output_is_graceful(self):
         resp = MagicMock(status_code=200, ok=True)

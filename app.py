@@ -4,7 +4,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, s
 from werkzeug.exceptions import BadRequest
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from llm_advisor import explain_alert
+from llm_advisor import explain_alert, warm_up_model
 from auth import (
     admin_required,
     compliance_required,
@@ -261,11 +261,26 @@ def _background_simulation_loop(interval_seconds):
         time.sleep(interval_seconds)
 
 
+def _start_llm_warmup():
+    if (
+        os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") == "1"
+        or os.environ.get("INSIGHTER_LLM_WARMUP", "1") == "0"
+    ):
+        return None
+    worker = threading.Thread(
+        target=warm_up_model, name="insighter-llm-warmup", daemon=True
+    )
+    worker.start()
+    return worker
+
+
 if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
     _sim_interval = float(os.environ.get("INSIGHTER_SIM_INTERVAL_SECONDS", "6"))
     threading.Thread(
         target=_background_simulation_loop, args=(_sim_interval,), daemon=True
     ).start()
+
+_start_llm_warmup()
 
 @app.route("/api/whoami")
 @login_required
