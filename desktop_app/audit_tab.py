@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from desktop_app.async_utils import run_async
 
 class AuditTab(QWidget):
     """
@@ -61,11 +62,14 @@ class AuditTab(QWidget):
         layout.addWidget(card)
 
     def refresh(self):
-        try:
-            entries = self.client.get_audit_log()
-        except Exception:
-            return
+        run_async(
+            self.client.get_audit_log,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, entries):
         self.count_label.setText(f"{len(entries)} entries")
         self.table.setRowCount(len(entries))
         for row, e in enumerate(entries):

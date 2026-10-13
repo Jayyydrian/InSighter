@@ -1,4 +1,5 @@
 import os
+import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -7,6 +8,17 @@ from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
 
 from desktop_app.dashboard_tab import DashboardTab
 from desktop_app.role_sessions_tab import RoleSessionsTab
+
+
+def wait_for(app, predicate, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    app.processEvents()
+    return predicate()
 
 
 class SectorViewClient:
@@ -29,10 +41,14 @@ class SectorViewTest(unittest.TestCase):
         tab = RoleSessionsTab(SectorViewClient())
         tab.refresh()
 
+        self.assertTrue(self._wait_for_role_view(tab))
         labels = [label.text() for label in tab.findChildren(QLabel)]
         self.assertIn("Drone_Operator", labels)
         self.assertNotIn("Researcher", labels)
         self.assertEqual(tab.count_label.text(), "1 users · 1 roles")
+
+    def _wait_for_role_view(self, tab):
+        return wait_for(self.app, lambda: tab.count_label.text() == "1 users · 1 roles")
 
     def test_dashboard_history_scrolls_with_twenty_users(self):
         tab = DashboardTab(SectorViewClient())
@@ -60,7 +76,7 @@ class SectorViewTest(unittest.TestCase):
         tab.history = {"researcher_01": [12, 13], "drone_operator_01": [40, 50]}
         tab._update_sparklines()
 
-        tab._refresh_scores()
+        tab._refresh_scores(ActiveSectorClient().get_scores())
 
         self.assertEqual(set(tab.history), {"drone_operator_01"})
         self.assertEqual(set(tab._sparkline_rows), {"drone_operator_01"})

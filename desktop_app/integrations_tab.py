@@ -1,14 +1,15 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
 
 STATUS_COLORS = {"not_connected": "#94a3b8", "connected": "#6ee7b7"}
-
-
 class IntegrationsTab(QWidget):
     """Status of the three supported log-ingestion data sources."""
 
     def __init__(self, client):
         super().__init__()
         self.client = client
+        self._ingest_in_flight = False
         self._build_ui()
 
     def _build_ui(self):
@@ -43,11 +44,14 @@ class IntegrationsTab(QWidget):
         outer.addStretch()
 
     def refresh(self):
-        try:
-            integrations = self.client.get_integrations()
-        except Exception:
-            return
+        run_async(
+            self.client.get_integrations,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, integrations):
         while self.card_layout.count():
             item = self.card_layout.takeAt(0)
             if item.widget():
@@ -61,9 +65,9 @@ class IntegrationsTab(QWidget):
             row_layout.setContentsMargins(18, 14, 18, 14)
 
             text_col = QVBoxLayout()
-            name = QLabel(integ["name"])
+            name = plain_label(integ["name"])
             name.setStyleSheet("font-size:13px; font-weight:600; color:#e2e8f0;")
-            note = QLabel(integ["note"])
+            note = plain_label(integ["note"])
             note.setObjectName("muted")
             note.setWordWrap(True)
             text_col.addWidget(name)
@@ -71,7 +75,7 @@ class IntegrationsTab(QWidget):
             row_layout.addLayout(text_col, stretch=1)
 
             color = STATUS_COLORS.get(integ["status"], "#64748b")
-            pill = QLabel(integ["status"].replace("_", " ").upper())
+            pill = plain_label(integ["status"].replace("_", " ").upper())
             pill.setStyleSheet(
                 f"color:{color}; background:rgba(100,116,139,35); border:1px solid {color}; border-radius:10px; "
                 f"padding:4px 12px; font-size:10px; font-weight:700;"
@@ -81,13 +85,30 @@ class IntegrationsTab(QWidget):
             self.card_layout.addWidget(row)
 
     def _ingest(self):
+        if self._ingest_in_flight:
+            return
+        self._ingest_in_flight = True
         self.ingest_btn.setEnabled(False)
         self.ingest_status.setText("Fetching events...")
-        try:
-            result = self.client.ingest_events()
-            self.ingest_status.setText(f"Inserted {result.get('inserted', 0)} events.")
-            self.refresh()
-        except Exception as exc:
-            self.ingest_status.setText(str(exc))
-        finally:
-            self.ingest_btn.setEnabled(True)
+        run_async(
+            self.client.ingest_events,
+            self._ingest_succeeded,
+            self._ingest_failed,
+            parent=self,
+            monitor_source="integration-ingest",
+            counts_toward_offline=False,
+            report_success=False,
+        )
+
+    def _ingest_succeeded(self, result):
+        self._ingest_in_flight = False
+        self.ingest_status.setText(f"Inserted {result.get('inserted', 0)} events.")
+        self.ingest_btn.setEnabled(True)
+        self.refresh()
+
+    def _ingest_failed(self, exc):
+        self._ingest_in_flight = False
+        self.ingest_status.setText(
+            getattr(exc, "message", None) or "Could not fetch events."
+        )
+        self.ingest_btn.setEnabled(True)

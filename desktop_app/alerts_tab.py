@@ -2,7 +2,8 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, Q
 from PyQt6.QtCore import Qt
 from PyQt6 import sip
 
-from desktop_app.ai_worker import AiAnalysisWorker
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
 
 SEVERITY_COLORS = {"CRITICAL": "#ef4444", "HIGH": "#ef4444", "MEDIUM": "#f59e0b"}
 
@@ -11,7 +12,6 @@ class AlertsTab(QWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
-        self._ai_workers = set()
         self._ai_results = {}
         self._build_ui()
 
@@ -57,11 +57,14 @@ class AlertsTab(QWidget):
         outer.addWidget(self.card)
 
     def refresh(self):
-        try:
-            alerts = self.client.get_alerts()
-        except Exception:
-            return
+        run_async(
+            self.client.get_alerts,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, alerts):
         # clear existing cards
         while self.list_layout.count():
             item = self.list_layout.takeAt(0)
@@ -93,21 +96,23 @@ class AlertsTab(QWidget):
 
         body = QVBoxLayout()
         body.setSpacing(2)
-        user_label = QLabel(f"<b>{a['user']}</b>  ·  login@{a['login_hour']}:00")
+        user_label = plain_label(f"{a['user']}  ·  login@{a['login_hour']}:00")
         body.addWidget(user_label)
 
-        desc = QLabel(a["description"])
+        desc = plain_label(a["description"])
         desc.setWordWrap(True)
         body.addWidget(desc)
 
-        meta = QLabel(f"Flagged by: {a['flagged_by']}  ·  Blended score: {a['final_score']}")
+        meta = plain_label(
+            f"Flagged by: {a['flagged_by']}  ·  Blended score: {a['final_score']}"
+        )
         meta.setObjectName("muted")
         body.addWidget(meta)
 
         ai_button = QPushButton("AI Analysis")
         ai_button.setObjectName("secondary")
         ai_button.setFixedWidth(110)
-        ai_panel = QLabel("")
+        ai_panel = plain_label("")
         ai_panel.setWordWrap(True)
         ai_panel.setObjectName("muted")
         ai_panel.setVisible(False)
@@ -119,7 +124,7 @@ class AlertsTab(QWidget):
         self._render_ai_state(a["id"], ai_button, ai_panel)
         layout.addLayout(body, stretch=1)
 
-        sev = QLabel(a["severity"])
+        sev = plain_label(a["severity"])
         sev.setStyleSheet(
             f"color:{color}; background:rgba(239,68,68,30); border:1px solid {color}; "
             "border-radius:4px; padding:2px 8px; font-size:10px; font-weight:700;"
@@ -134,13 +139,25 @@ class AlertsTab(QWidget):
             return
         self._ai_results[alert_id] = {"status": "loading"}
         self._render_ai_state(alert_id, button, panel)
-        worker = AiAnalysisWorker(self.client, alert_id)
-        self._ai_workers.add(worker)
-        worker.result_ready.connect(
-            lambda result: self._show_ai_result(alert_id, result, button, panel)
+        run_async(
+            lambda: self.client.explain_alert(alert_id),
+            lambda result: self._show_ai_result(alert_id, result, button, panel),
+            lambda exc: self._show_ai_result(
+                alert_id,
+                {
+                    "available": False,
+                    "reason": str(exc) or "AI analysis unavailable",
+                    "explanation": None,
+                    "recommendation": None,
+                },
+                button,
+                panel,
+            ),
+            parent=self,
+            monitor_source="alert-ai",
+            counts_toward_offline=False,
+            report_success=False,
         )
-        worker.finished.connect(lambda: self._ai_workers.discard(worker))
-        worker.start()
 
     def _show_ai_result(self, alert_id, result, button, panel):
         self._ai_results[alert_id] = {

@@ -1,8 +1,11 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QStackedWidget, QButtonGroup, QScrollArea
+    QFrame, QStackedWidget, QButtonGroup, QScrollArea, QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime
+from desktop_app.async_utils import run_async
+from desktop_app.connection_state import CONNECTED, ConnectionMonitor
+from desktop_app.safe_text import plain_label
 
 from desktop_app.dashboard_tab import DashboardTab
 from desktop_app.profiles_tab import ProfilesTab
@@ -48,9 +51,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.client = client
         self.on_logout = on_logout
+        self._logged_out = False
+        self.connection_monitor = ConnectionMonitor(self)
+        self.client.connection_monitor = self.connection_monitor
         self.setWindowTitle("InSighter -- Insider Threat Monitoring Console")
         self.resize(1280, 820)
         self._build_ui()
+        if hasattr(self, "uav_tab"):
+            self.uav_tab.configuration_saved.connect(
+                self.dashboard_tab.refresh_thresholds
+            )
+        self.connection_monitor.state_changed.connect(
+            self._connection_state_changed
+        )
+        self.connection_monitor.refreshed.connect(self._connection_refreshed)
+        self.connection_monitor.session_expired.connect(self._session_expired)
         self._refresh_all()
 
         self.timer = QTimer(self)
@@ -122,10 +137,16 @@ class MainWindow(QMainWindow):
 
         pulse = QLabel("\u25cf")
         pulse.setStyleSheet(f"color:{GREEN}; font-size:10px;")
-        live = QLabel("LIVE")
-        live.setStyleSheet(f"color:{GREEN}; font-size:10px; font-family:Consolas,monospace;")
+        self.live_label = QLabel("CONNECTED")
+        self.live_label.setStyleSheet(f"color:{GREEN}; font-size:10px; font-family:Consolas,monospace;")
+        self.live_pulse = pulse
         h.addWidget(pulse)
-        h.addWidget(live)
+        h.addWidget(self.live_label)
+        self.last_updated_label = plain_label("Updated: —")
+        self.last_updated_label.setStyleSheet(
+            f"color:{MUTED}; font-size:10px; font-family:Consolas,monospace;"
+        )
+        h.addWidget(self.last_updated_label)
         h.addWidget(self._divider())
 
         self.clock_label = QLabel("--:--:--")
@@ -134,12 +155,15 @@ class MainWindow(QMainWindow):
 
         if self.client.role == "admin":
             h.addWidget(self._divider())
-            reseed_btn = QPushButton("\u21ba Reseed")
-            reseed_btn.clicked.connect(self._reseed)
-            h.addWidget(reseed_btn)
+            self.reseed_btn = QPushButton("\u21ba Reseed")
+            self.reseed_btn.clicked.connect(self._reseed)
+            h.addWidget(self.reseed_btn)
+            self.reseed_status = plain_label("")
+            self.reseed_status.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+            h.addWidget(self.reseed_status)
 
         h.addWidget(self._divider())
-        role_label = QLabel(f"{self.client.username} \u00b7 {self.client.role}")
+        role_label = plain_label(f"{self.client.username} \u00b7 {self.client.role}")
         role_label.setStyleSheet(f"color:{MUTED2}; font-size:11px; font-family:Consolas,monospace;")
         h.addWidget(role_label)
 
@@ -339,6 +363,40 @@ class MainWindow(QMainWindow):
     def _tick_clock(self):
         self.clock_label.setText(QDateTime.currentDateTime().toString("HH:mm:ss"))
 
+    def _connection_state_changed(self, state, message):
+        if state == CONNECTED:
+            self.live_label.setText("CONNECTED")
+            self.live_label.setStyleSheet(
+                f"color:{GREEN}; font-size:10px; font-family:Consolas,monospace;"
+            )
+            self.live_pulse.setStyleSheet(f"color:{GREEN}; font-size:10px;")
+        else:
+            self.live_label.setText("OFFLINE")
+            self.live_label.setStyleSheet(
+                f"color:{RED}; font-size:10px; font-family:Consolas,monospace;"
+            )
+            self.live_pulse.setStyleSheet(f"color:{RED}; font-size:10px;")
+            if message:
+                self.last_updated_label.setToolTip(
+                    "Backend connection unavailable; retries continue."
+                )
+
+    def _connection_refreshed(self):
+        self.last_updated_label.setText(
+            "Updated: " + QDateTime.currentDateTime().toString("HH:mm:ss")
+        )
+        self.last_updated_label.setToolTip("")
+
+    def _session_expired(self):
+        if self._logged_out:
+            return
+        QMessageBox.warning(
+            self,
+            "Session expired",
+            "Your InSighter session has expired. Please sign in again.",
+        )
+        self._logout()
+
     def _refresh_all(self):
         self._refresh_active()
         if self.client.role == "admin":
@@ -375,14 +433,37 @@ class MainWindow(QMainWindow):
     def _reseed(self):
         if hasattr(self, "dashboard_tab"):
             self.dashboard_tab.reset_history()
-        try:
-            self.client.reseed()
-        except Exception:
-            pass
+        self.reseed_btn.setEnabled(False)
+        self.reseed_status.setText("Reseeding...")
+        run_async(
+            self.client.reseed,
+            self._reseed_succeeded,
+            self._reseed_failed,
+            parent=self,
+            monitor_source="reseed",
+            counts_toward_offline=False,
+            report_success=False,
+        )
+
+    def _reseed_succeeded(self, _result):
+        self.reseed_btn.setEnabled(True)
+        self.reseed_status.setText("Reseed complete.")
         self._refresh_all()
 
+    def _reseed_failed(self, exc):
+        self.reseed_btn.setEnabled(True)
+        self.reseed_status.setText(
+            "Reseed failed: " + (getattr(exc, "message", None) or "Request failed.")
+        )
+
     def _logout(self):
+        if self._logged_out:
+            return
+        self._logged_out = True
         self.timer.stop()
         self.clock_timer.stop()
-        self.client.logout()
         self.on_logout()
+        run_async(
+            self.client.logout,
+            lambda _result: None,
+        )

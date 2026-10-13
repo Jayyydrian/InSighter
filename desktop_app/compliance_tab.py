@@ -1,4 +1,8 @@
 from PyQt6.QtCore import Qt
+
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
+
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -99,11 +103,20 @@ class ComplianceTab(QWidget):
         return card
 
     def refresh(self):
-        try:
+        def fetch():
             alerts = self.client.get_compliance_alerts()
             audit_entries = self.client.get_compliance_audit_log()
-        except Exception:
-            return
+            return alerts, audit_entries
+
+        run_async(
+            fetch,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
+
+    def _apply_refresh(self, result):
+        alerts, audit_entries = result
         self._refresh_alerts(alerts)
         self._refresh_audit(audit_entries)
 
@@ -138,18 +151,18 @@ class ComplianceTab(QWidget):
 
         body = QVBoxLayout()
         body.setSpacing(2)
-        body.addWidget(QLabel(f"<b>{alert['user']}</b>  ·  login@{alert['login_hour']}:00"))
-        description = QLabel(alert["description"])
+        body.addWidget(plain_label(f"{alert['user']} · login@{alert['login_hour']}:00"))
+        description = plain_label(alert["description"])
         description.setWordWrap(True)
         body.addWidget(description)
-        meta = QLabel(
+        meta = plain_label(
             f"Flagged by: {alert['flagged_by']}  ·  Blended score: {alert['final_score']}"
         )
         meta.setObjectName("muted")
         body.addWidget(meta)
         layout.addLayout(body, stretch=1)
 
-        severity = QLabel(alert["severity"])
+        severity = plain_label(alert["severity"])
         severity.setStyleSheet(
             f"color:{color}; background:rgba(239,68,68,30); border:1px solid {color}; "
             "border-radius:4px; padding:2px 8px; font-size:10px; font-weight:700;"

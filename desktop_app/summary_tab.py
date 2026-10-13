@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
+from desktop_app.async_utils import run_async
 
 RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#10b981"}
 
@@ -51,10 +52,14 @@ class SummaryTab(QWidget):
         layout.addStretch()
 
     def refresh(self):
-        try:
-            counts = self.client.get_summary()
-        except Exception:
-            return
+        run_async(
+            self.client.get_summary,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
+
+    def _apply_refresh(self, counts):
         self.card_high.value_label.setText(str(counts.get("HIGH", 0)))
         self.card_medium.value_label.setText(str(counts.get("MEDIUM", 0)))
         self.card_low.value_label.setText(str(counts.get("LOW", 0)))

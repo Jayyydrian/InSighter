@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QFrame
-
+from desktop_app.async_utils import run_async
 
 def _metric_box(label_text, sub_text=""):
     box = QFrame()
@@ -64,11 +64,14 @@ class ResourcesTab(QWidget):
         layout.addStretch()
 
     def refresh(self):
-        try:
-            d = self.client.get_resources()
-        except Exception:
-            return
+        run_async(
+            self.client.get_resources,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, d):
         self.cpu_box.value_label.setText(f'{d["proc_cpu"]}%')
         self.cpu_box.sub_label.setText(f'raw: {d["proc_cpu_raw"]}% across all cores')
 

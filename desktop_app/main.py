@@ -3,9 +3,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import Qt
 
-from desktop_app.server_launcher import ensure_backend_running
+from desktop_app import server_launcher
 from desktop_app.theme import QSS
 from desktop_app.login_window import LoginWindow
 from desktop_app.main_window import MainWindow
@@ -19,9 +20,19 @@ class InSighterApp:
         self.login_window = None
 
     def start(self):
-        ok = ensure_backend_running()
+        ok = server_launcher.ensure_backend_running()
         if not ok:
-            print("ERROR: could not start InSighter backend.")
+            reason = server_launcher.last_error or "Could not start the InSighter backend."
+            if os.path.exists(server_launcher.LOG_FILE):
+                reason += f"\n\nStartup log: {server_launcher.LOG_FILE}"
+            dialog = QMessageBox(
+                QMessageBox.Icon.Critical,
+                "InSighter backend unavailable",
+                reason,
+                QMessageBox.StandardButton.Ok,
+            )
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.exec()
             sys.exit(1)
 
         self._show_login()

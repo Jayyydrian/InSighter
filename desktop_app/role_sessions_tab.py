@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
 
 # Roles are whatever the active sector defines (see sector_config.py), so
 # colors are derived from the role name instead of a fixed per-role table.
@@ -55,12 +57,20 @@ class RoleSessionsTab(QWidget):
         outer.addWidget(scroll)
 
     def refresh(self):
-        try:
+        def fetch():
             scores = self.client.get_scores()
             allowed_roles = set(self.client.get_active_taxonomy().get("roles", []))
-        except Exception:
-            return
+            return scores, allowed_roles
 
+        run_async(
+            fetch,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
+
+    def _apply_refresh(self, result):
+        scores, allowed_roles = result
         grouped = defaultdict(list)
         for user in scores:
             role = user.get("role", "unknown") or "unknown"
@@ -88,7 +98,7 @@ class RoleSessionsTab(QWidget):
 
         header = QHBoxLayout()
         header.setContentsMargins(16, 12, 16, 12)
-        role_label = QLabel(role.title())
+        role_label = plain_label(role.title())
         role_label.setStyleSheet(
             f"color:{role_color(role) if role and role != 'unknown' else '#e2e8f0'}; "
             f"font-weight:700; font-size:13px;"
