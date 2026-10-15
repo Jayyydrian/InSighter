@@ -1,10 +1,11 @@
+import logging
 import re
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
 from model import score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from llm_advisor import explain_alert
+from llm_advisor import explain_alert, warm_up_model
 from auth import (
     admin_required,
     compliance_required,
@@ -24,8 +25,11 @@ from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector_config, monitoring_scope as calculate_monitoring_scope
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # Lets desktop_app/server_launcher.py tell a genuinely-fresh backend process apart
 # from a stale one left running from before app.py was last edited on disk, instead
 # of silently reusing whatever already answers on the port (see /api/_backend-info).
@@ -255,10 +259,23 @@ def _background_simulation_loop(interval_seconds):
     while True:
         try:
             _run_simulation_tick()
-        except Exception:
+        except Exception as exc:
             # A transient DB/model hiccup should never kill the background loop.
-            pass
+            logger.warning("Background simulation tick failed: %s", exc)
         time.sleep(interval_seconds)
+
+
+def _start_llm_warmup():
+    if (
+        os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") == "1"
+        or os.environ.get("INSIGHTER_LLM_WARMUP", "1") == "0"
+    ):
+        return None
+    worker = threading.Thread(
+        target=warm_up_model, name="insighter-llm-warmup", daemon=True
+    )
+    worker.start()
+    return worker
 
 
 if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
@@ -266,6 +283,8 @@ if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
     threading.Thread(
         target=_background_simulation_loop, args=(_sim_interval,), daemon=True
     ).start()
+
+_start_llm_warmup()
 
 @app.route("/api/whoami")
 @login_required

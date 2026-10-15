@@ -72,8 +72,9 @@ def monitoring_scope(conn):
     if "data_category" not in columns or not categories:
         in_scope = 0
     else:
+        # Only placeholder markers are interpolated; category values remain bound.
         in_scope = conn.execute(
-            "SELECT COUNT(*) FROM logs WHERE LOWER(data_category) IN ({})".format(
+            "SELECT COUNT(*) FROM logs WHERE LOWER(data_category) IN ({})".format(  # nosec B608
                 ",".join("?" for _ in categories)
             ),
             tuple(categories),

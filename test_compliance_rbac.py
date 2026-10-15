@@ -4,8 +4,11 @@ import unittest
 from contextlib import closing
 
 import database
+from test_support import isolate_database, temporary_database_path
 
-DB_PATH = tempfile.mktemp(suffix=".db")
+isolate_database()
+
+DB_PATH = temporary_database_path()
 os.environ["INSIGHTER_DB_PATH"] = DB_PATH
 os.environ["INSIGHTER_DISABLE_BACKGROUND_SIM"] = "1"
 

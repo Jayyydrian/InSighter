@@ -1,8 +1,11 @@
 """Database connections with optional SQLCipher encryption and migration."""
 
+import logging
 import os
 import shutil
 import sqlite3 as plaintext_sqlite
+
+logger = logging.getLogger(__name__)
 
 try:
     from sqlcipher3 import dbapi2 as sqlite3
@@ -49,8 +52,8 @@ def _migrate_legacy_database():
             existing.close()
             if has_tables or not os.path.exists(LEGACY_DB_PATH):
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Could not inspect existing encrypted database at %s: %s", DB_PATH, exc)
         os.remove(DB_PATH)
 
     if not os.path.exists(LEGACY_DB_PATH):

@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from desktop_app.async_utils import run_async
 
 class SessionsTab(QWidget):
     """Raw session/log entries as ingested, most recent first."""
@@ -53,11 +54,14 @@ class SessionsTab(QWidget):
         layout.addWidget(card)
 
     def refresh(self):
-        try:
-            sessions = self.client.get_sessions()
-        except Exception:
-            return
+        run_async(
+            self.client.get_sessions,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, sessions):
         self.count_label.setText(f"{len(sessions)} sessions")
         self.table.setRowCount(len(sessions))
         for row, s in enumerate(sessions):

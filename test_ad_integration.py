@@ -6,11 +6,12 @@ from ldap3 import Connection, MOCK_SYNC, OFFLINE_AD_2012_R2, Server
 
 import database
 import ingestion
+from test_support import temporary_database_path
 
 
 class ActiveDirectoryIntegrationTest(unittest.TestCase):
     def setUp(self):
-        self.database_path = tempfile.mktemp(suffix=".db")
+        self.database_path = temporary_database_path()
         self.previous_database_path = database.DB_PATH
         database.DB_PATH = self.database_path
         os.environ.update({

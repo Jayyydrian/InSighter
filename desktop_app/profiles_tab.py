@@ -4,6 +4,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
+
 RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#22c55e"}
 
 
@@ -57,19 +60,31 @@ class ProfilesTab(QWidget):
         layout.addWidget(self.detail_card, stretch=1)
 
     def refresh(self):
-        try:
-            self.users = self.client.get_scores()
-        except Exception:
-            return
+        run_async(
+            self.client.get_scores,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
 
+    def _apply_refresh(self, users):
+        self.users = users
         normal_users = [u for u in self.users if u["risk_level"] == "LOW"] or self.users
 
-        self.baseline = {
-            "avg_files": round(sum(u["avg_files"] for u in normal_users) / len(normal_users), 1),
-            "avg_transfer": round(sum(u["avg_transfer"] for u in normal_users) / len(normal_users), 1),
-            "avg_failed_logins": round(sum(u["avg_failed_logins"] for u in normal_users) / len(normal_users), 1),
-            "off_hours": round(sum(u["off_hours"] for u in normal_users) / len(normal_users), 1),
-        }
+        if not normal_users:
+            self.baseline = {
+                "avg_files": 0,
+                "avg_transfer": 0,
+                "avg_failed_logins": 0,
+                "off_hours": 0,
+            }
+        else:
+            self.baseline = {
+                "avg_files": round(sum(u["avg_files"] for u in normal_users) / len(normal_users), 1),
+                "avg_transfer": round(sum(u["avg_transfer"] for u in normal_users) / len(normal_users), 1),
+                "avg_failed_logins": round(sum(u["avg_failed_logins"] for u in normal_users) / len(normal_users), 1),
+                "off_hours": round(sum(u["off_hours"] for u in normal_users) / len(normal_users), 1),
+            }
 
         current_username = (
             self.user_list.currentItem().text()
@@ -113,16 +128,16 @@ class ProfilesTab(QWidget):
 
         header = QHBoxLayout()
 
-        name = QLabel(u["user"])
+        name = plain_label(u["user"])
         name.setObjectName("h1")
 
-        badge = QLabel(u["risk_level"])
+        badge = plain_label(u["risk_level"])
         badge.setStyleSheet(
             f"color:{color}; border:1px solid {color}; border-radius:10px;"
             f"padding:3px 10px; font-size:11px; font-weight:700;"
         )
 
-        score = QLabel(f"{u['risk_score']}% risk score")
+        score = plain_label(f"{u['risk_score']}% risk score")
         score.setStyleSheet(f"color:{color}; font-weight:700;")
 
         header.addWidget(name)
@@ -132,7 +147,7 @@ class ProfilesTab(QWidget):
 
         self.detail_layout.addLayout(header)
 
-        subtitle = QLabel(
+        subtitle = plain_label(
             f"Role: {u.get('role', 'unknown').title()} · "
             f"Isolation Forest: {u['if_score']} · One-Class SVM: {u['ocsvm_score']} · "
             f"Role baseline deviation: {u.get('role_baseline_score', 0)}"

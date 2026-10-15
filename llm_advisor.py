@@ -17,8 +17,10 @@ Design constraints:
 """
 
 import json
+import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -28,14 +30,22 @@ OLLAMA_MODEL = os.environ.get(
     "INSIGHTER_LLM_MODEL",
     os.environ.get("INSIGHTER_OLLAMA_MODEL", "phi4-mini"),
 )
+LLM_NUM_CTX = int(os.environ.get("INSIGHTER_LLM_NUM_CTX", "2048"))
+LLM_MAX_TOKENS = int(os.environ.get("INSIGHTER_LLM_MAX_TOKENS", "256"))
+LLM_KEEP_ALIVE = os.environ.get("INSIGHTER_LLM_KEEP_ALIVE", "30m")
 USAGE_LOG_PATH = os.environ.get(
     "INSIGHTER_LLM_USAGE_LOG_PATH",
     os.path.join(os.path.dirname(__file__), "llm_usage_log.jsonl"),
 )
-# Phi-4-mini's measured maximum was 12.3s; 30s leaves over 2x cold-start margin
-# while avoiding a 90s wait on a genuine failure. Override for slower hardware or
-# benchmarked models with longer cold starts; AI Analysis runs in a background thread.
-REQUEST_TIMEOUT_SECONDS = int(os.environ.get("INSIGHTER_OLLAMA_TIMEOUT_SECONDS", "30"))
+# Set the desktop timeout above this value; the default desktop timeout is 120s.
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get(
+    "INSIGHTER_LLM_TIMEOUT",
+    os.environ.get("INSIGHTER_OLLAMA_TIMEOUT_SECONDS", "90"),
+))
+WARMUP_TIMEOUT_SECONDS = float(os.environ.get("INSIGHTER_LLM_WARMUP_TIMEOUT", "120"))
+OLLAMA_CONNECT_TIMEOUT_SECONDS = 3
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_DATA_SOURCES = (
     "the alert's own fields",
@@ -188,7 +198,7 @@ def _unavailable(reason):
     return {"available": False, "reason": reason, "explanation": None, "recommendation": None}
 
 
-def _log_usage(alert, success, payload=None, error_type=None):
+def _log_usage(alert, success, payload=None, error_type=None, elapsed_seconds=None):
     """Append usage metrics without allowing logging errors to affect callers."""
     try:
         payload = payload or {}
@@ -209,11 +219,35 @@ def _log_usage(alert, success, payload=None, error_type=None):
             "eval_duration_ms": duration_ms("eval_duration"),
             "success": success,
             "error_type": error_type,
+            "failure_kind": error_type if not success else None,
+            "elapsed_seconds": (
+                round(elapsed_seconds, 3) if elapsed_seconds is not None else None
+            ),
         }
         with open(USAGE_LOG_PATH, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass
+    except Exception as exc:  # pragma: no cover - logging should never break app flow
+        logger.warning("Failed to append LLM usage log entry: %s", exc)
+
+
+def warm_up_model():
+    """Load the configured local model without delaying or failing app startup."""
+    try:
+        keep_alive = os.environ.get("INSIGHTER_LLM_KEEP_ALIVE", LLM_KEEP_ALIVE)
+        timeout = float(os.environ.get(
+            "INSIGHTER_LLM_WARMUP_TIMEOUT", str(WARMUP_TIMEOUT_SECONDS)
+        ))
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={"model": OLLAMA_MODEL, "stream": False, "keep_alive": keep_alive},
+            timeout=(OLLAMA_CONNECT_TIMEOUT_SECONDS, timeout),
+        )
+        response.raise_for_status()
+        return True
+    except Exception as exc:
+        message = " ".join(str(exc).split())[:180]
+        logger.warning("Ollama model warm-up failed: %s", message or type(exc).__name__)
+        return False
 
 
 def _unsupported_data_sources(text, alert, sector_config):
@@ -401,6 +435,19 @@ def _claims_false_off_hours(text, alert):
 
 def explain_alert(alert, sector, sector_config):
     """Call the local Ollama model to explain one alert. Never raises."""
+    started = time.monotonic()
+    keep_alive = os.environ.get("INSIGHTER_LLM_KEEP_ALIVE", LLM_KEEP_ALIVE)
+
+    def unavailable(reason, failure_kind, payload=None):
+        _log_usage(
+            alert,
+            success=False,
+            payload=payload,
+            error_type=failure_kind,
+            elapsed_seconds=time.monotonic() - started,
+        )
+        return _unavailable(reason)
+
     try:
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
@@ -410,27 +457,70 @@ def explain_alert(alert, sector, sector_config):
                 "prompt": _build_user_prompt(alert, sector, sector_config),
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0},
+                "keep_alive": keep_alive,
+                "options": {
+                    "temperature": 0,
+                    "num_ctx": int(os.environ.get("INSIGHTER_LLM_NUM_CTX", str(LLM_NUM_CTX))),
+                    "num_predict": int(os.environ.get(
+                        "INSIGHTER_LLM_MAX_TOKENS", str(LLM_MAX_TOKENS)
+                    )),
+                },
             },
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            timeout=(OLLAMA_CONNECT_TIMEOUT_SECONDS, REQUEST_TIMEOUT_SECONDS),
+        )
+    except requests.exceptions.Timeout:
+        timeout_text = f"{REQUEST_TIMEOUT_SECONDS:g}"
+        return unavailable(
+            f"The local model did not answer within {timeout_text} s. "
+            "It may still be loading or running slowly; try again, or raise "
+            "INSIGHTER_LLM_TIMEOUT.",
+            "Timeout",
         )
     except requests.exceptions.ConnectionError:
-        _log_usage(alert, success=False, error_type="ConnectionError")
-        return _unavailable(f"Ollama not running at {OLLAMA_HOST}")
-    except requests.exceptions.Timeout:
-        _log_usage(alert, success=False, error_type="Timeout")
-        return _unavailable("Ollama request timed out")
+        return unavailable(
+            "Ollama is not running. Start it and try again.",
+            "ConnectionError",
+        )
     except requests.exceptions.RequestException as exc:
-        _log_usage(alert, success=False, error_type=type(exc).__name__)
-        return _unavailable(f"Ollama request failed: {exc}")
+        message = " ".join(str(exc).split())[:180]
+        return unavailable(
+            f"Ollama request failed: {message or type(exc).__name__}",
+            type(exc).__name__,
+        )
+    except Exception as exc:
+        message = " ".join(str(exc).split())[:180]
+        return unavailable(
+            f"Ollama request failed: {message or type(exc).__name__}",
+            type(exc).__name__,
+        )
 
-    if response.status_code == 404:
-        _log_usage(alert, success=False, error_type="HTTPStatusError")
-        return _unavailable(f"Model '{OLLAMA_MODEL}' not found — run `ollama pull {OLLAMA_MODEL}`")
+    try:
+        error_body = response.json() if not response.ok else {}
+    except (ValueError, TypeError):
+        error_body = {}
+    error_text = str(error_body).casefold()
+    model_missing = (
+        response.status_code == 404
+        or OLLAMA_MODEL.casefold() in error_text
+        or (
+            "model" in error_text
+            and any(term in error_text for term in ("not found", "not installed", "pull"))
+        )
+    )
+    if model_missing:
+        return unavailable(
+            f"Model '{OLLAMA_MODEL}' is not installed. Run: ollama pull {OLLAMA_MODEL}",
+            "ModelNotFound",
+            error_body,
+        )
     if not response.ok:
-        _log_usage(alert, success=False, error_type="HTTPStatusError")
-        return _unavailable(f"Ollama returned HTTP {response.status_code}")
+        return unavailable(
+            f"Ollama returned HTTP {response.status_code}",
+            "HTTPStatusError",
+            error_body,
+        )
 
+    payload = None
     try:
         payload = response.json()
         raw_text = payload["response"]
@@ -438,30 +528,43 @@ def explain_alert(alert, sector, sector_config):
         explanation = parsed["explanation"]
         recommendation = parsed["recommendation"]
     except (KeyError, ValueError, TypeError):
-        _log_usage(alert, success=False, payload=payload if "payload" in locals() else None,
-                   error_type="InvalidResponseError")
-        return _unavailable("Could not parse a response from the model")
+        return unavailable("Could not parse a response from the model",
+                           "InvalidResponseError", payload)
 
     if _claims_false_off_hours(f"{explanation} {recommendation}", alert):
-        _log_usage(alert, success=False, payload=payload, error_type="OffHoursClassificationMismatch")
-        return _unavailable("Model response contradicted the system off-hours classification")
+        return unavailable(
+            "Model response contradicted the system off-hours classification",
+            "OffHoursClassificationMismatch",
+            payload,
+        )
 
     unsupported_sources = _unsupported_data_sources(
         f"{explanation} {recommendation}", alert, sector_config
     )
     if unsupported_sources:
-        _log_usage(alert, success=False, payload=payload, error_type="UnsupportedDataSourceError")
-        return _unavailable("Model response referenced an unsupported data source")
+        return unavailable(
+            "Model response referenced an unsupported data source",
+            "UnsupportedDataSourceError",
+            payload,
+        )
 
     response_text = f"{explanation} {recommendation}"
     if (
         _unsupported_risk_conclusions(response_text, alert)
         or _mismatched_severity_language(response_text, alert)
     ):
-        _log_usage(alert, success=False, payload=payload, error_type="UnsupportedRiskConclusionError")
-        return _unavailable("Model response made an unsupported risk or severity claim")
+        return unavailable(
+            "Model response made an unsupported risk or severity claim",
+            "UnsupportedRiskConclusionError",
+            payload,
+        )
 
-    _log_usage(alert, success=True, payload=payload)
+    _log_usage(
+        alert,
+        success=True,
+        payload=payload,
+        elapsed_seconds=time.monotonic() - started,
+    )
     return {
         "available": True,
         "reason": None,

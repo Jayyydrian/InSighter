@@ -4,6 +4,10 @@ section: stat row, live User Risk Matrix, Alert Feed, Risk History
 sparklines, and Runtime Resources panel.
 """
 
+import logging
+import math
+import time
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QPushButton
@@ -13,7 +17,10 @@ from PyQt6.QtGui import QColor
 from PyQt6 import sip
 import zlib
 
-from desktop_app.ai_worker import AiAnalysisWorker
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
+
+logger = logging.getLogger(__name__)
 
 RED = "#ef4444"
 YELLOW = "#f59e0b"
@@ -36,6 +43,7 @@ SEVERITY_COLORS = {"CRITICAL": CRITICAL, "HIGH": RED, "MEDIUM": YELLOW}
 AVATAR_PALETTE = ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#ef4444", "#f59e0b", "#ec4899", "#14b8a6"]
 
 HISTORY_MAX = 20
+DEFAULT_THRESHOLDS = (45.0, 30.0)
 
 
 def avatar_color(username):
@@ -43,12 +51,16 @@ def avatar_color(username):
     return AVATAR_PALETTE[zlib.crc32(username.encode()) % len(AVATAR_PALETTE)]
 
 
-def score_color(pct):
-    if pct >= 40:
-        return RED
-    if pct >= 15:
-        return YELLOW
-    return GREEN
+def risk_level_for(score, threshold_high, threshold_medium):
+    if score >= threshold_high:
+        return "HIGH"
+    if score >= threshold_medium:
+        return "MEDIUM"
+    return "LOW"
+
+
+def score_color(pct, threshold_high=45, threshold_medium=30):
+    return RISK_COLORS[risk_level_for(pct, threshold_high, threshold_medium)]
 
 
 def gauge_color(val):
@@ -89,7 +101,7 @@ def _panel(title_text, dot_color, meta_text=""):
     head_layout.addWidget(title)
     head_layout.addStretch()
 
-    meta = QLabel(meta_text)
+    meta = plain_label(meta_text)
     meta.setStyleSheet(f"color:{MUTED}; font-size:10px;")
     head_layout.addWidget(meta)
 
@@ -105,9 +117,10 @@ class DashboardTab(QWidget):
         self.client = client
         self.history = {}
         self.last_users = []
+        self.threshold_high, self.threshold_medium = DEFAULT_THRESHOLDS
+        self._thresholds_fetched_at = 0.0
         self._sparkline_rows = {}
         self._sparkline_widgets = {}
-        self._ai_workers = set()
         self._ai_results = {}
         self._build_ui()
 
@@ -141,7 +154,7 @@ class DashboardTab(QWidget):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(4)
 
-        label = QLabel(label_text)
+        label = plain_label(label_text)
         label.setStyleSheet(
             f"color:{MUTED}; font-size:10px; font-weight:600; "
             f"text-transform:uppercase; letter-spacing:0.6px; border:none;"
@@ -151,7 +164,7 @@ class DashboardTab(QWidget):
             f"color:{accent_color}; font-size:26px; font-weight:700; "
             f"font-family:Consolas,monospace; border:none;"
         )
-        sub = QLabel(sub_text)
+        sub = plain_label(sub_text)
         sub.setStyleSheet(f"color:{MUTED}; font-size:10px; border:none;")
 
         layout.addWidget(label)
@@ -249,7 +262,7 @@ class DashboardTab(QWidget):
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(10)
 
-        label = QLabel(user)
+        label = plain_label(user)
         label.setFixedWidth(120)
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setStyleSheet(f"color:{MUTED2}; font-size:11px;")
@@ -261,7 +274,7 @@ class DashboardTab(QWidget):
         bars_layout.setSpacing(2)
         bars_layout.addStretch()
 
-        val_label = QLabel("-")
+        val_label = plain_label("-")
         val_label.setFixedWidth(40)
         val_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         val_label.setStyleSheet(f"color:{TEXT}; font-size:11px; font-family:Consolas,monospace;")
@@ -273,15 +286,110 @@ class DashboardTab(QWidget):
 
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
-        self._refresh_scores()
-        self._refresh_alerts()
-        self._refresh_runtime_status()
+        fetch_thresholds = time.monotonic() - self._thresholds_fetched_at >= 30
 
-    def _refresh_runtime_status(self):
+        def fetch():
+            results = {}
+            requests = [
+                ("scores", self.client.get_scores),
+                ("alerts", self.client.get_alerts),
+                ("resources", self.client.get_resources),
+            ]
+            if fetch_thresholds:
+                requests.append(("thresholds", self.client.get_uav_config))
+            for name, method in requests:
+                try:
+                    results[name] = method()
+                except Exception as exc:
+                    results[name] = exc
+            return results
+
+        run_async(
+            fetch,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+            monitor_client=self.client,
+            report_success=False,
+        )
+
+    def refresh_thresholds(self):
+        run_async(
+            self.client.get_uav_config,
+            self._apply_thresholds,
+            parent=self,
+            key="thresholds",
+        )
+
+    def _apply_refresh(self, results):
+        for name, method in (
+            ("scores", self._refresh_scores),
+            ("alerts", self._refresh_alerts),
+            ("resources", self._refresh_runtime_status),
+        ):
+            result = results[name]
+            if isinstance(result, Exception):
+                continue
+            method(result)
+        if "thresholds" in results:
+            config = results["thresholds"]
+            if not isinstance(config, Exception):
+                self._apply_thresholds(config)
+        monitor = getattr(self.client, "connection_monitor", None)
+        failures = [value for value in results.values() if isinstance(value, Exception)]
+        if monitor is not None:
+            if failures:
+                monitor.record_failure(failures[0], True, "dashboard")
+            else:
+                monitor.record_success("dashboard")
+        else:
+            for failure in failures:
+                logger.warning("Failed to refresh dashboard: %s", failure)
+
+    def _apply_thresholds(self, config):
         try:
-            resources = self.client.get_resources()
-        except Exception:
+            high = float(config["threshold_high"])
+            medium = float(config["threshold_medium"])
+            if not (
+                math.isfinite(high)
+                and math.isfinite(medium)
+                and 0 <= medium < high <= 100
+            ):
+                raise ValueError("invalid threshold range")
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Ignoring invalid dashboard risk thresholds.")
             return
+        self.threshold_high = high
+        self.threshold_medium = medium
+        self._thresholds_fetched_at = time.monotonic()
+        self._refresh_score_colors()
+
+    def set_thresholds(self, high, medium):
+        self._apply_thresholds({
+            "threshold_high": high,
+            "threshold_medium": medium,
+        })
+
+    def _refresh_score_colors(self):
+        for row, user in enumerate(self.last_users):
+            level = risk_level_for(
+                user["risk_score"], self.threshold_high, self.threshold_medium
+            )
+            self.table.setCellWidget(row, 3, self._score_bar_cell(user["risk_score"]))
+            self.table.setCellWidget(row, 4, self._badge_cell(level))
+        if self.last_users:
+            top_color = score_color(
+                self.last_users[0]["risk_score"],
+                self.threshold_high,
+                self.threshold_medium,
+            )
+            self.card_top.value_label.setStyleSheet(
+                f"color:{top_color}; font-size:26px; font-weight:700; "
+                "font-family:Consolas,monospace; border:none;"
+            )
+        self._update_sparklines()
+
+    def _refresh_runtime_status(self, resources):
         self.alert_meta.setText(
             f"{self.alert_meta.property('alert_count') or 0} alerts · "
             f"{resources.get('events_total', 0)} live events"
@@ -296,12 +404,7 @@ class DashboardTab(QWidget):
         self._sparkline_rows = {}
         self._sparkline_widgets = {}
 
-    def _refresh_scores(self):
-        try:
-            users = self.client.get_scores()
-        except Exception:
-            return
-
+    def _refresh_scores(self, users):
         self.last_users = users
         active_users = {user["user"] for user in users}
         for stale_user in set(self.history) - active_users:
@@ -314,13 +417,21 @@ class DashboardTab(QWidget):
 
         counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for u in users:
-            counts[u["risk_level"]] = counts.get(u["risk_level"], 0) + 1
+            counts[u["risk_level"]] += 1
 
         top = users[0] if users else None
         self.card_high.value_label.setText(str(counts["HIGH"]))
         self.card_medium.value_label.setText(str(counts["MEDIUM"]))
         self.card_low.value_label.setText(str(counts["LOW"]))
         self.card_top.value_label.setText(f"{top['risk_score']}%" if top else "-")
+        top_color = (
+            score_color(top["risk_score"], self.threshold_high, self.threshold_medium)
+            if top else ACCENT
+        )
+        self.card_top.value_label.setStyleSheet(
+            f"color:{top_color}; font-size:26px; font-weight:700; "
+            "font-family:Consolas,monospace; border:none;"
+        )
         self.card_top.sub_label.setText(top["user"] if top else "-")
 
         self.matrix_meta.setText(f"{len(users)} users monitored")
@@ -332,7 +443,7 @@ class DashboardTab(QWidget):
             for col, key in ((1, "if_score"), (2, "ocsvm_score")):
                 item = QTableWidgetItem(str(u[key]))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setForeground(QColor(score_color(u[key])))
+                item.setForeground(QColor(MUTED2))
                 self.table.setItem(row, col, item)
 
             self.table.setCellWidget(row, 3, self._score_bar_cell(u["risk_score"]))
@@ -361,7 +472,7 @@ class DashboardTab(QWidget):
         h.setContentsMargins(10, 4, 10, 4)
         h.setSpacing(9)
 
-        av = QLabel(username[0].upper())
+        av = plain_label(username[0].upper())
         av.setFixedSize(26, 26)
         av.setAlignment(Qt.AlignmentFlag.AlignCenter)
         color = avatar_color(username)
@@ -372,9 +483,9 @@ class DashboardTab(QWidget):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(0)
-        name = QLabel(username)
+        name = plain_label(username)
         name.setStyleSheet(f"color:{TEXT}; font-weight:500; font-size:12px;")
-        role_label = QLabel(str(role).title())
+        role_label = plain_label(str(role).title())
         role_label.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         text_col.addWidget(name)
         text_col.addWidget(role_label)
@@ -391,7 +502,7 @@ class DashboardTab(QWidget):
         h.setContentsMargins(8, 4, 8, 4)
         h.setSpacing(8)
 
-        color = score_color(score)
+        color = score_color(score, self.threshold_high, self.threshold_medium)
         track = QFrame()
         track.setFixedSize(70, 4)
         track.setStyleSheet(f"background:{BORDER2}; border-radius:2px;")
@@ -405,7 +516,7 @@ class DashboardTab(QWidget):
         track_layout.addWidget(fill)
         track_layout.addStretch()
 
-        num = QLabel(f"{score}%")
+        num = plain_label(f"{score}%")
         num.setStyleSheet(f"color:{color}; font-weight:600; font-size:12px; font-family:Consolas,monospace;")
 
         h.addWidget(track)
@@ -419,7 +530,7 @@ class DashboardTab(QWidget):
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
         color = RISK_COLORS.get(level, TEXT)
-        badge = QLabel(level)
+        badge = plain_label(level)
         badge.setStyleSheet(
             f"color:{color}; border:1px solid {color}; border-radius:4px; "
             f"padding:2px 8px; font-size:10px; font-weight:700; letter-spacing:0.3px;"
@@ -444,18 +555,23 @@ class DashboardTab(QWidget):
                 bar.setFixedHeight(h)
                 bar.setMinimumWidth(3)
                 bar.setSizePolicy(bar.sizePolicy().Policy.Expanding, bar.sizePolicy().Policy.Fixed)
-                bar.setStyleSheet(f"background:{score_color(v)}; border-radius:2px;")
+                bar.setStyleSheet(
+                    f"background:{score_color(v, self.threshold_high, self.threshold_medium)}; "
+                    "border-radius:2px;"
+                )
                 bars_layout.addWidget(bar, alignment=Qt.AlignmentFlag.AlignBottom)
             bars_layout.addStretch()
 
             val_label.setText(f"{hist[-1]}%" if hist else "-")
+            color = (
+                score_color(hist[-1], self.threshold_high, self.threshold_medium)
+                if hist else TEXT
+            )
+            val_label.setStyleSheet(
+                f"color:{color}; font-size:11px; font-family:Consolas,monospace;"
+            )
 
-    def _refresh_alerts(self):
-        try:
-            alerts = self.client.get_alerts()
-        except Exception:
-            return
-
+    def _refresh_alerts(self, alerts):
         while self.alert_layout.count():
             item = self.alert_layout.takeAt(0)
             if item.widget():
@@ -492,23 +608,28 @@ class DashboardTab(QWidget):
 
         body = QVBoxLayout()
         body.setSpacing(2)
-        user_label = QLabel(
-            f"<b>{a['user']}</b> "
-            f"<span style='color:{MUTED}; font-size:10px;'>login@{a['login_hour']}:00</span>"
-        )
-        user_label.setStyleSheet(f"color:{TEXT}; font-size:12px;")
-        desc = QLabel(a["description"])
+        user_label = plain_label(a["user"])
+        user_label.setStyleSheet(f"color:{TEXT}; font-weight:700;")
+        login_label = plain_label(f"  ·  login@{a['login_hour']}:00")
+        login_label.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        desc = plain_label(a["description"])
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color:{MUTED}; font-size:11px;")
-        meta = QLabel(f"flagged by <b>{a['flagged_by']}</b> \u00b7 score {a['final_score']}")
+        meta = plain_label(f"flagged by {a['flagged_by']} \u00b7 score {a['final_score']}")
         meta.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        body.addWidget(user_label)
+        user_row = QHBoxLayout()
+        user_row.setContentsMargins(0, 0, 0, 0)
+        user_row.setSpacing(0)
+        user_row.addWidget(user_label)
+        user_row.addWidget(login_label)
+        user_row.addStretch()
+        body.addLayout(user_row)
         body.addWidget(desc)
         body.addWidget(meta)
         ai_button = QPushButton("AI Analysis")
         ai_button.setObjectName("secondary")
         ai_button.setFixedWidth(110)
-        ai_panel = QLabel("")
+        ai_panel = plain_label("")
         ai_panel.setWordWrap(True)
         ai_panel.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         ai_panel.setVisible(False)
@@ -520,7 +641,7 @@ class DashboardTab(QWidget):
         self._render_ai_state(a["id"], ai_button, ai_panel)
         h.addLayout(body, stretch=1)
 
-        badge = QLabel(a["severity"])
+        badge = plain_label(a["severity"])
         badge.setStyleSheet(
             f"color:{color}; background:rgba(239,68,68,30); border:1px solid {color}; border-radius:4px; "
             f"padding:2px 8px; font-size:10px; font-weight:700;"
@@ -534,13 +655,26 @@ class DashboardTab(QWidget):
             return
         self._ai_results[alert_id] = {"status": "loading"}
         self._render_ai_state(alert_id, button, panel)
-        worker = AiAnalysisWorker(self.client, alert_id)
-        self._ai_workers.add(worker)
-        worker.result_ready.connect(
-            lambda result: self._show_ai_result(alert_id, result, button, panel)
+        run_async(
+            lambda: self.client.explain_alert(alert_id),
+            lambda result: self._show_ai_result(alert_id, result, button, panel),
+            lambda exc: self._show_ai_result(
+                alert_id,
+                {
+                    "available": False,
+                    "reason": str(exc) or "AI analysis unavailable",
+                    "explanation": None,
+                    "recommendation": None,
+                },
+                button,
+                panel,
+            ),
+            parent=self,
+            monitor_client=self.client,
+            monitor_source="dashboard-ai",
+            counts_toward_offline=False,
+            report_success=False,
         )
-        worker.finished.connect(lambda: self._ai_workers.discard(worker))
-        worker.start()
 
     def _show_ai_result(self, alert_id, result, button, panel):
         self._ai_results[alert_id] = {
@@ -572,4 +706,3 @@ class DashboardTab(QWidget):
             panel.setText(
                 f"AI analysis unavailable: {entry.get('reason', 'Ollama is not running.')}"
             )
-

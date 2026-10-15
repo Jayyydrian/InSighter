@@ -80,7 +80,8 @@ def _header(path: Path) -> pd.DataFrame:
 
 def _user_column(frame: pd.DataFrame) -> str:
     column = _column(frame, ("user", "username", "user_id", "userid", "employee"))
-    assert column is not None
+    if column is None:
+        raise ValueError(f"Missing a user identifier column in CERT frame: {list(frame.columns)}")
     return column
 
 
@@ -89,7 +90,8 @@ def _add_logons(path: Path, aggregates: dict[str, dict[str, Any]], chunk_size: i
     header = _header(path)
     user_column = _user_column(header)
     timestamp_column = _column(header, ("date", "timestamp", "datetime", "time"))
-    assert timestamp_column is not None
+    if timestamp_column is None:
+        raise ValueError(f"Missing a timestamp column in CERT logon file headers: {list(header.columns)}")
     processed = 0
     for chunk in pd.read_csv(path, chunksize=chunk_size, low_memory=False):
         hours = pd.to_datetime(chunk[timestamp_column], errors="coerce").dt.hour
@@ -135,7 +137,8 @@ def _add_devices(path: Path, aggregates: dict[str, dict[str, Any]], chunk_size: 
     header = _header(path)
     user_column = _user_column(header)
     activity_column = _column(header, ("activity", "action", "event"))
-    assert activity_column is not None
+    if activity_column is None:
+        raise ValueError(f"Missing an activity column in CERT device file headers: {list(header.columns)}")
     processed = 0
     for chunk in pd.read_csv(path, chunksize=chunk_size, low_memory=False):
         for username, activity in zip(chunk[user_column], chunk[activity_column]):
@@ -154,7 +157,8 @@ def _add_email(path: Path, aggregates: dict[str, dict[str, Any]]) -> None:
     frame = pd.read_csv(path, low_memory=False)
     user_column = _user_column(frame)
     size_column = _column(frame, ("size", "attachment_size", "attachmentsize", "bytes"))
-    assert size_column is not None
+    if size_column is None:
+        raise ValueError(f"Missing a size column in CERT email file headers: {list(frame.columns)}")
     for username, value in zip(frame[user_column], frame[size_column]):
         if pd.isna(username) or pd.isna(value):
             continue
@@ -173,7 +177,8 @@ def _add_http_signal(path: Path, aggregates: dict[str, dict[str, Any]], chunk_si
     header = _header(path)
     user_column = _user_column(header)
     url_column = _column(header, ("url", "uri", "link"))
-    assert url_column is not None
+    if url_column is None:
+        raise ValueError(f"Missing a URL column in CERT HTTP file headers: {list(header.columns)}")
     processed = 0
     for chunk in pd.read_csv(path, usecols=[user_column, url_column], chunksize=chunk_size, low_memory=False):
         for username, url in zip(chunk[user_column], chunk[url_column]):
@@ -206,7 +211,8 @@ def _load_roles(ldap_dir: Path, month: str | None = None) -> dict[str, str]:
     frame = pd.read_csv(path, sep="\t" if path.suffix.lower() == ".tsv" else ",", low_memory=False)
     user_column = _user_column(frame)
     role_column = _column(frame, ("role", "job_role", "jobrole", "title", "employee_role"))
-    assert role_column is not None
+    if role_column is None:
+        raise ValueError(f"Missing a role column in LDAP file headers: {list(frame.columns)}")
     roles = {
         str(user).strip(): str(role).strip()
         for user, role in zip(frame[user_column], frame[role_column])

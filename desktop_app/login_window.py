@@ -1,9 +1,15 @@
+import logging
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFrame, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from desktop_app.api_client import ApiClient, ApiError
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
+
+logger = logging.getLogger(__name__)
 
 
 class LoginWindow(QWidget):
@@ -61,7 +67,7 @@ class LoginWindow(QWidget):
         self.login_btn.clicked.connect(self._attempt_login)
         card_layout.addWidget(self.login_btn)
 
-        self.error_label = QLabel("")
+        self.error_label = plain_label("")
         self.error_label.setObjectName("error")
         self.error_label.setWordWrap(True)
         card_layout.addWidget(self.error_label)
@@ -89,6 +95,8 @@ class LoginWindow(QWidget):
         return lbl
 
     def _attempt_login(self):
+        if not self.login_btn.isEnabled():
+            return
         username = self.username_input.text().strip()
         password = self.password_input.text()
         if not username or not password:
@@ -99,20 +107,26 @@ class LoginWindow(QWidget):
         self.login_btn.setText("Signing in…")
         self.error_label.setText("")
 
-        try:
-            success = self.client.login(username, password)
-        except ApiError as exc:
-            success = False
-            self.error_label.setText(exc.message)
-        except Exception as exc:
-            success = False
-            self.error_label.setText(f"Could not reach backend: {exc}")
+        run_async(
+            lambda: self.client.login(username, password),
+            self._login_succeeded,
+            self._login_failed,
+            parent=self,
+        )
 
+    def _login_succeeded(self, success):
         self.login_btn.setEnabled(True)
         self.login_btn.setText("Sign In")
-
         if success:
             self.login_succeeded.emit(self.client)
         else:
-            if not self.error_label.text():
-                self.error_label.setText("Invalid username or password.")
+            self.error_label.setText("Invalid username or password.")
+
+    def _login_failed(self, exc):
+        self.login_btn.setEnabled(True)
+        self.login_btn.setText("Sign In")
+        if isinstance(exc, ApiError):
+            self.error_label.setText(exc.message)
+        else:
+            logger.warning("Sign-in request failed: %s", exc)
+            self.error_label.setText("Could not reach the InSighter backend.")

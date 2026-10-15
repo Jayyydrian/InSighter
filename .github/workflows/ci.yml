@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      INSIGHTER_DISABLE_BACKGROUND_SIM: "1"
+      INSIGHTER_LLM_WARMUP: "0"
+      INSIGHTER_SECRET_KEY: ci-test-key
+      EXPECTED_MIN_TESTS: "137"   # raise this whenever you add tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-desktop.txt ruff
+      - name: Lint
+        run: ruff check .
+      - name: Run tests
+        run: python scripts/run_tests_ci.py
+        

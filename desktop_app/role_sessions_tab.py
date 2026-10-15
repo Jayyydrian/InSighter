@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from desktop_app.async_utils import run_async
+from desktop_app.safe_text import plain_label
 
 
 class RoleSessionsTab(QWidget):
@@ -76,10 +78,10 @@ class RoleSessionsTab(QWidget):
         self.details_widget = QFrame()
         self.details_widget.setObjectName("card")
         details_layout = QVBoxLayout(self.details_widget)
-        self.details_title = QLabel()
+        self.details_title = plain_label()
         self.details_title.setObjectName("h2")
         details_layout.addWidget(self.details_title)
-        self.details_summary = QLabel()
+        self.details_summary = plain_label()
         self.details_summary.setWordWrap(True)
         self.details_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         details_layout.addWidget(self.details_summary)
@@ -87,12 +89,20 @@ class RoleSessionsTab(QWidget):
         outer.addWidget(self.details_widget)
 
     def refresh(self):
-        try:
+        def fetch():
             scores = self.client.get_scores()
             allowed_roles = set(self.client.get_active_taxonomy().get("roles", []))
-        except Exception:
-            return
+            return scores, allowed_roles
 
+        run_async(
+            fetch,
+            self._apply_refresh,
+            parent=self,
+            key="refresh",
+        )
+
+    def _apply_refresh(self, result):
+        scores, allowed_roles = result
         self.scores = [
             user for user in scores
             if (user.get("role", "unknown") or "unknown") in allowed_roles

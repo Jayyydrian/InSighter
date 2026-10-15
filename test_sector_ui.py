@@ -1,12 +1,24 @@
 import os
+import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
+from PyQt6.QtWidgets import QApplication, QScrollArea
 
 from desktop_app.dashboard_tab import DashboardTab
 from desktop_app.role_sessions_tab import RoleSessionsTab
+
+
+def wait_for(app, predicate, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    app.processEvents()
+    return predicate()
 
 
 class SectorViewClient:
@@ -29,6 +41,7 @@ class SectorViewTest(unittest.TestCase):
         tab = RoleSessionsTab(SectorViewClient())
         tab.refresh()
 
+        self.assertTrue(self._wait_for_role_view(tab))
         self.assertEqual(tab.table.columnCount(), 2)
         self.assertEqual(
             [tab.table.horizontalHeaderItem(column).text() for column in range(2)],
@@ -42,6 +55,7 @@ class SectorViewTest(unittest.TestCase):
     def test_clicking_risk_level_displays_user_details(self):
         tab = RoleSessionsTab(SectorViewClient())
         tab.refresh()
+        self.assertTrue(self._wait_for_role_view(tab))
 
         tab.table.cellClicked.emit(0, 1)
 
@@ -59,6 +73,7 @@ class SectorViewTest(unittest.TestCase):
 
         tab = RoleSessionsTab(AllRolesClient())
         tab.refresh()
+        self.assertTrue(self._wait_for_role_view(tab, expected_rows=2))
 
         tab.risk_filter.setCurrentIndex(tab.risk_filter.findData("HIGH"))
         self.assertEqual(tab.table.rowCount(), 1)
@@ -79,6 +94,9 @@ class SectorViewTest(unittest.TestCase):
         self.assertEqual(tab.table.item(0, 0).text(), "drone_operator_01")
         tab.sort_order.setCurrentIndex(tab.sort_order.findData("ascending"))
         self.assertEqual(tab.table.item(0, 0).text(), "researcher_01")
+
+    def _wait_for_role_view(self, tab, expected_rows=1):
+        return wait_for(self.app, lambda: tab.table.rowCount() == expected_rows)
 
     def test_dashboard_history_scrolls_with_twenty_users(self):
         tab = DashboardTab(SectorViewClient())
@@ -106,7 +124,7 @@ class SectorViewTest(unittest.TestCase):
         tab.history = {"researcher_01": [12, 13], "drone_operator_01": [40, 50]}
         tab._update_sparklines()
 
-        tab._refresh_scores()
+        tab._refresh_scores(ActiveSectorClient().get_scores())
 
         self.assertEqual(set(tab.history), {"drone_operator_01"})
         self.assertEqual(set(tab._sparkline_rows), {"drone_operator_01"})

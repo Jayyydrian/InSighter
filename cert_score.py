@@ -74,7 +74,8 @@ def youden_threshold(scores: pd.DataFrame) -> tuple[float, float, float]:
         candidate = (statistic, -threshold, threshold, tpr, fpr)
         if best is None or candidate > best:
             best = candidate
-    assert best is not None
+    if best is None:
+        raise ValueError("Youden calibration could not identify a valid threshold from the supplied scores")
     return best[2], best[3], best[4]
 
 
@@ -93,7 +94,8 @@ def fbeta_threshold(scores: pd.DataFrame, beta: float = 0.5) -> tuple[float, flo
         candidate = (metric, threshold)
         if best is None or candidate > best:
             best = candidate
-    assert best is not None
+    if best is None:
+        raise ValueError("F-beta calibration could not identify a valid threshold from the supplied scores")
     threshold = best[1]
     return threshold, best[0]
 

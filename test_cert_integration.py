@@ -1,4 +1,6 @@
 import csv
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +8,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
+import cert_adapter
+import cert_score
 from cert_adapter import build_feature_table, feature_table_to_events, load_ground_truth
 from cert_score import CERT_FEATURES, auc_metrics, calibrated_cutoffs, fbeta_threshold, score_cert, split_users, youden_threshold
 from model import FEATURES, _prepare_model_features
@@ -19,6 +23,80 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 class CertIntegrationTest(unittest.TestCase):
+    def test_adapter_missing_column_guards_raise_value_error(self):
+        with patch("cert_adapter._column", return_value=None):
+            with self.assertRaisesRegex(ValueError, "user identifier"):
+                cert_adapter._user_column(pd.DataFrame(columns=["wrong"]))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            file_path = root / "source.csv"
+            write_csv(file_path, [{"user": "alice", "unused": "value"}])
+            cases = (
+                (cert_adapter._add_logons, (file_path, {}, 10), "timestamp"),
+                (cert_adapter._add_devices, (file_path, {}, 10), "activity"),
+                (cert_adapter._add_email, (file_path, {}), "size"),
+                (cert_adapter._add_http_signal, (file_path, {}, 10), "URL"),
+            )
+            for function, args, expected_message in cases:
+                with self.subTest(function=function.__name__), \
+                        patch("cert_adapter._user_column", return_value="user"), \
+                        patch("cert_adapter._column", return_value=None):
+                    with self.assertRaisesRegex(ValueError, expected_message):
+                        function(*args)
+
+            ldap = root / "ldap"
+            ldap.mkdir()
+            write_csv(ldap / "ldap.csv", [{"user": "alice", "unused": "value"}])
+            with patch("cert_adapter._user_column", return_value="user"), \
+                    patch("cert_adapter._column", return_value=None):
+                with self.assertRaisesRegex(ValueError, "role"):
+                    cert_adapter._load_roles(ldap)
+
+    def test_score_fallback_guards_raise_value_error(self):
+        scores = pd.DataFrame({
+            "final_score": [1.0, 2.0],
+            "actual_label": [0, 1],
+        })
+        with patch("cert_score.sorted", return_value=[] , create=True):
+            with self.assertRaisesRegex(ValueError, "Youden calibration"):
+                cert_score.youden_threshold(scores)
+            with self.assertRaisesRegex(ValueError, "F-beta calibration"):
+                cert_score.fbeta_threshold(scores)
+
+    def test_assert_replacements_remain_active_under_optimized_python(self):
+        code = """
+import pandas as pd
+import cert_adapter
+import cert_score
+
+cert_adapter._column = lambda *args, **kwargs: None
+try:
+    cert_adapter._user_column(pd.DataFrame(columns=["wrong"]))
+except ValueError:
+    pass
+else:
+    raise RuntimeError("CERT adapter guard did not raise ValueError")
+
+cert_score.sorted = lambda *args, **kwargs: []
+try:
+    cert_score.youden_threshold(pd.DataFrame({
+        "final_score": [1.0, 2.0],
+        "actual_label": [0, 1],
+    }))
+except ValueError:
+    pass
+else:
+    raise RuntimeError("CERT score guard did not raise ValueError")
+"""
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_default_cert_scoring_passes_cert_features_to_ensemble(self):
         feature_table = pd.DataFrame({
             "user": ["alice", "bob"],
