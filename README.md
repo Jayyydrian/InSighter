@@ -1,3 +1,5 @@
+[![CI](https://github.com/Jayyydrian/InSighter/actions/workflows/ci.yml/badge.svg)](https://github.com/Jayyydrian/InSighter/actions/workflows/ci.yml)
+
 # InSighter 
 
 AI-assisted insider threat detection.
@@ -43,12 +45,13 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 ## Quick Start — Desktop App (recommended)
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-desktop.txt
 python desktop_app/main.py
 ```
 
-This automatically starts the Flask backend in the background (port 5051) and opens the
-PyQt6 login window. Log in with:
+`requirements.txt` installs the backend dependencies; `requirements-desktop.txt` adds
+PyQt6 for the desktop client. The launcher automatically starts the Flask backend in the
+background (port 5051) and opens the login window. Log in with:
 
 | Username | Password    | Role         | Access                          |
 |----------|-------------|--------------|----------------------------------|

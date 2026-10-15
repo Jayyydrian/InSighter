@@ -226,8 +226,8 @@ def _log_usage(alert, success, payload=None, error_type=None, elapsed_seconds=No
         }
         with open(USAGE_LOG_PATH, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass
+    except Exception as exc:  # pragma: no cover - logging should never break app flow
+        logger.warning("Failed to append LLM usage log entry: %s", exc)
 
 
 def warm_up_model():

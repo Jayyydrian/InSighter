@@ -8,9 +8,13 @@ from unittest.mock import patch, MagicMock
 
 import requests
 
-DB_PATH = tempfile.mktemp(suffix=".db")
+from test_support import isolate_database, temporary_database_path
+
+DB_PATH = temporary_database_path()
 os.environ["INSIGHTER_DB_PATH"] = DB_PATH
 os.environ["INSIGHTER_DISABLE_BACKGROUND_SIM"] = "1"
+
+isolate_database()
 
 import llm_advisor
 import app
@@ -723,6 +727,9 @@ class LlmAdvisorUnitTest(unittest.TestCase):
 
     def test_model_not_found_is_graceful(self):
         resp = MagicMock(status_code=404, ok=False)
+        resp.json.return_value = {
+            "error": f"model '{llm_advisor.OLLAMA_MODEL}' not found"
+        }
         with patch("llm_advisor.requests.post", return_value=resp):
             result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
         self.assertFalse(result["available"])
@@ -731,6 +738,10 @@ class LlmAdvisorUnitTest(unittest.TestCase):
             f"Model '{llm_advisor.OLLAMA_MODEL}' is not installed. "
             f"Run: ollama pull {llm_advisor.OLLAMA_MODEL}",
         )
+        with open(self.usage_log_path, encoding="utf-8") as log_file:
+            entry = json.loads(log_file.readline())
+        self.assertEqual(entry["failure_kind"], "ModelNotFound")
+        self.assertEqual(entry["model"], llm_advisor.OLLAMA_MODEL)
 
     def test_malformed_model_output_is_graceful(self):
         resp = MagicMock(status_code=200, ok=True)

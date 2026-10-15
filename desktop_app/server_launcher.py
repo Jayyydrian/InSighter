@@ -5,6 +5,7 @@ wait for a live, reachable HTTP backend before opening the login window.
 """
 
 import atexit
+import logging
 import os
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from pathlib import Path
 
 import psutil
 import requests
+
+logger = logging.getLogger(__name__)
 
 # Make the project root (parent of desktop_app/) importable so `import app` works
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,8 +39,8 @@ def _log_startup_error(message: str):
     try:
         with open(LOG_FILE, "w", encoding="utf-8") as f:
             f.write(message)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not write backend startup error log at %s: %s", LOG_FILE, exc)
 
 
 def _ping_backend():
@@ -205,8 +208,8 @@ def _stop_backend_process():
     if _server_process is not None and _server_process.poll() is None:
         try:
             _server_process.terminate()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Could not terminate backend process: %s", exc)
 
 
 atexit.register(_stop_backend_process)

@@ -8,6 +8,10 @@ from flask import session
 
 os.environ.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")
 
+from test_support import isolate_database
+
+isolate_database()
+
 import llm_advisor
 import app
 import requests

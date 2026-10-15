@@ -6,6 +6,10 @@ from contextlib import closing
 import pandas as pd
 
 import database
+from test_support import isolate_database, temporary_database_path
+
+isolate_database()
+
 os.environ["INSIGHTER_DISABLE_BACKGROUND_SIM"] = "1"
 from auth import init_users_table
 from generate_logs import EVENTS_PER_USER, generate
@@ -17,7 +21,7 @@ from app import app
 
 class SectorDeploymentTest(unittest.TestCase):
     def setUp(self):
-        self.database_path = tempfile.mktemp(suffix=".db")
+        self.database_path = temporary_database_path()
         self.previous_database_path = database.DB_PATH
         database.DB_PATH = self.database_path
         init_users_table()
