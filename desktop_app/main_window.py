@@ -12,6 +12,7 @@ from desktop_app.profiles_tab import ProfilesTab
 from desktop_app.role_sessions_tab import RoleSessionsTab
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.uav_config_tab import UavConfigTab
+from desktop_app.role_baseline_setup_tab import RoleBaselineSetupTab
 from desktop_app.summary_tab import SummaryTab
 from desktop_app.sessions_tab import SessionsTab
 from desktop_app.resources_tab import ResourcesTab
@@ -45,6 +46,15 @@ class _NavItem(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.badge = None
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.badge is not None:
+            self.badge.adjustSize()
+            self.badge.move(
+                self.width() - self.badge.width() - 12,
+                (self.height() - self.badge.height()) // 2,
+            )
+
 
 class MainWindow(QMainWindow):
     def __init__(self, client, on_logout):
@@ -60,6 +70,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, "uav_tab"):
             self.uav_tab.configuration_saved.connect(
                 self.dashboard_tab.refresh_thresholds
+            )
+        if hasattr(self, "baseline_setup_tab"):
+            self.baseline_setup_tab.configuration_changed.connect(
+                self._update_baseline_banner
             )
         self.connection_monitor.state_changed.connect(
             self._connection_state_changed
@@ -225,6 +239,15 @@ class MainWindow(QMainWindow):
         self._nav_section(layout, "Config")
         integrations_item = _NavItem("\u229e", "Integrations")
         layout.addWidget(integrations_item)
+        baseline_item = _NavItem("\u25cf", "Baseline Setup")
+        baseline_item.badge = plain_label("SETUP", baseline_item)
+        baseline_item.badge.setStyleSheet(
+            "background:#f59e0b; color:#111827; border-radius:7px; "
+            "padding:2px 5px; font-size:9px; font-weight:700;"
+        )
+        baseline_item.badge.setVisible(False)
+        layout.addWidget(baseline_item)
+        self.baseline_nav_item = baseline_item
         settings_item = _NavItem("\u25e7", "UAV Configuration")
         layout.addWidget(settings_item)
 
@@ -240,7 +263,7 @@ class MainWindow(QMainWindow):
         self.overview_badge.show()
 
         for item in (overview_item, sessions_item, profiles_item, role_item, alerts_item,
-                     resources_item, audit_item, integrations_item, settings_item):
+                     resources_item, audit_item, integrations_item, baseline_item, settings_item):
             self.nav_group.addButton(item)
 
         layout.addStretch()
@@ -265,7 +288,8 @@ class MainWindow(QMainWindow):
             resources_item: 5,
             audit_item: 6,
             integrations_item: 7,
-            settings_item: 8,
+            baseline_item: 8,
+            settings_item: 9,
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -308,6 +332,13 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(scroll_wrap)
         outer.setContentsMargins(18, 18, 18, 18)
 
+        self.baseline_banner = QLabel("Role baselines are not configured. InSighter is using built-in defaults.")
+        self.baseline_banner.setVisible(False)
+        self.baseline_banner.setStyleSheet(
+            "background:#1f2937; color:#f8fafc; border:1px solid #374151; border-radius:6px; padding:10px 12px;"
+        )
+        outer.addWidget(self.baseline_banner)
+
         self.stack = QStackedWidget()
 
         self.dashboard_tab = DashboardTab(self.client)
@@ -318,11 +349,12 @@ class MainWindow(QMainWindow):
         self.resources_tab = ResourcesTab(self.client)
         self.audit_tab = AuditTab(self.client)
         self.integrations_tab = IntegrationsTab(self.client)
+        self.baseline_setup_tab = RoleBaselineSetupTab(self.client)
         self.uav_tab = UavConfigTab(self.client)
 
         pages = (self.dashboard_tab, self.sessions_tab, self.profiles_tab, self.role_sessions_tab, self.alerts_tab,
              self.resources_tab, self.audit_tab,
-                 self.integrations_tab, self.uav_tab)
+                 self.integrations_tab, self.baseline_setup_tab, self.uav_tab)
 
         for page in pages:
             scroller = QScrollArea()
@@ -358,6 +390,7 @@ class MainWindow(QMainWindow):
     def _go_to(self, nav_item):
         index = self._nav_pages[nav_item]
         self.stack.setCurrentIndex(index)
+        self._set_baseline_banner_visibility()
         self._refresh_active()
 
     def _tick_clock(self):
@@ -401,6 +434,7 @@ class MainWindow(QMainWindow):
         self._refresh_active()
         if self.client.role == "admin":
             self._update_sidebar_stats()
+            self._update_baseline_banner()
 
     def _refresh_active(self):
         if self.client.role == "management":
@@ -412,6 +446,36 @@ class MainWindow(QMainWindow):
         index = self.stack.currentIndex()
         if 0 <= index < len(self.tab_refs):
             self.tab_refs[index].refresh()
+
+    def _update_baseline_banner(self):
+        if self.client.role != "admin":
+            return
+        run_async(
+            self.client.get_baseline_setup,
+            self._apply_baseline_status,
+            parent=self,
+            key="baseline-banner-status",
+            monitor_source="baseline-status",
+            report_success=False,
+        )
+
+    def _apply_baseline_status(self, payload):
+        self._baseline_setup_pending = payload.get("status") == "not_configured"
+        self._set_baseline_banner_visibility()
+
+    def _set_baseline_banner_visibility(self):
+        visible = (
+            self.client.role == "admin"
+            and getattr(self, "_baseline_setup_pending", False)
+        )
+        overview = getattr(self, "stack", None) is not None and self.stack.currentIndex() == 0
+        self.baseline_banner.setVisible(visible and overview)
+        badge = getattr(getattr(self, "baseline_nav_item", None), "badge", None)
+        if badge is not None:
+            badge.setVisible(visible)
+        self.baseline_banner.setText(
+            "Role baselines are not configured. InSighter is using built-in defaults."
+        )
 
     def _update_sidebar_stats(self):
         users = getattr(self.dashboard_tab, "last_users", [])

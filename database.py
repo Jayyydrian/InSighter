@@ -77,4 +77,24 @@ def ensure_database():
     """Migrate an existing plaintext DB or create the configured database."""
     _migrate_legacy_database()
     conn = connect()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS role_baselines (
+            sector TEXT,
+            role TEXT,
+            feature TEXT,
+            value REAL,
+            updated_by TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (sector, role, feature)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS baseline_setup_status (
+            sector TEXT PRIMARY KEY,
+            completed INTEGER NOT NULL DEFAULT 0,
+            completed_by TEXT,
+            completed_at TEXT
+        )
+    """)
+    conn.commit()
     conn.close()

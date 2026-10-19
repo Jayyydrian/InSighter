@@ -1,11 +1,13 @@
 import logging
+import math
 import re
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
-from model import score_users, get_recent_alerts, inject_live_event
+from model import get_learned_role_baselines, score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
 from llm_advisor import explain_alert, warm_up_model
+from role_baseline import ROLE_BASELINE_FEATURES, build_role_baseline_features
 from auth import (
     admin_required,
     compliance_required,
@@ -155,6 +157,129 @@ _alert_explanation_cache = {}
 _alert_explanation_cache_lock = threading.Lock()
 
 
+def _invalidate_baseline_state():
+    with _alert_explanation_cache_lock:
+        _alert_explanation_cache.clear()
+
+
+def _baseline_setup_status(sector):
+    conn = connect()
+    row = conn.execute(
+        "SELECT completed, completed_by, completed_at FROM baseline_setup_status WHERE sector = ?",
+        (sector,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return {"status": "not_configured", "completed_by": None, "completed_at": None}
+    return {
+        "status": "configured" if row[0] else "not_configured",
+        "completed_by": row[1],
+        "completed_at": row[2],
+    }
+
+
+def _baseline_setup_payload(sector):
+    import pandas as pd
+    conn = connect()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS baseline_setup_status (
+            sector TEXT PRIMARY KEY,
+            completed INTEGER NOT NULL DEFAULT 0,
+            completed_by TEXT,
+            completed_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS role_baselines (
+            sector TEXT,
+            role TEXT,
+            feature TEXT,
+            value REAL,
+            updated_by TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (sector, role, feature)
+        )
+        """
+    )
+    conn.commit()
+    has_logs = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='logs'"
+    ).fetchone()
+    row = None
+    if has_logs:
+        row = pd.read_sql("SELECT * FROM logs", conn)
+    conn.close()
+    status = _baseline_setup_status(sector)
+    roles = get_sector_config(sector)["roles"]
+    baseline_definitions = build_role_baseline_features()
+    default_baselines, overall = (
+        get_learned_role_baselines(row) if row is not None and not row.empty else ({}, {})
+    )
+    declared = {}
+    conn = connect()
+    for role, feature, value in conn.execute(
+        "SELECT role, feature, value FROM role_baselines WHERE sector = ?",
+        (sector,),
+    ):
+        declared.setdefault(role, {})[feature] = float(value)
+    conn.close()
+
+    def observed_values_for(role, feature):
+        if row is None or row.empty or "role" not in row.columns or feature not in row.columns:
+            return {"mean": None}
+        values = row[(row["role"] == role)][feature].dropna()
+        if values.empty:
+            return {"mean": None}
+        return {"mean": round(float(values.mean()), 2)}
+
+    items = []
+    role_payload = []
+    for role in roles:
+        role_features = []
+        for feature, spec in baseline_definitions.items():
+            default_value = float(default_baselines.get(role, {}).get(feature, overall.get(feature, 0.0)))
+            declared_value = declared.get(role, {}).get(feature)
+            effective_value = (
+                declared_value
+                if status["status"] == "configured" and declared_value is not None
+                else default_value
+            )
+            observed_mean = observed_values_for(role, feature)["mean"]
+            warning = None
+            if declared_value is not None and observed_mean is not None:
+                if declared_value > observed_mean * 5:
+                    warning = "Declared value is more than 5x the observed mean per event."
+                elif declared_value < observed_mean / 5:
+                    warning = "Declared value is less than one-fifth of the observed mean per event."
+            item = {
+                "role": role,
+                "feature": feature,
+                "label": spec["label"],
+                "unit": spec["unit"],
+                "min": spec["min"],
+                "max": spec["max"],
+                "default_value": default_value,
+                "declared_value": declared_value,
+                "effective_value": effective_value,
+                "observed": {"mean": observed_mean},
+                "warning": warning,
+            }
+            items.append(item)
+            role_features.append(item)
+        role_payload.append({"role": role, "features": role_features})
+    return {
+        "sector": sector,
+        "status": status["status"],
+        "completed_by": status["completed_by"],
+        "completed_at": status["completed_at"],
+        "items": items,
+        "roles": role_payload,
+    }
+
+
 @app.route("/api/alerts/<int:alert_id>/explain", methods=["POST"])
 @admin_required
 def explain_alert_route(alert_id):
@@ -174,6 +299,166 @@ def explain_alert_route(alert_id):
         with _alert_explanation_cache_lock:
             _alert_explanation_cache[alert_id] = result
     return jsonify(result)
+
+
+@app.route("/api/baseline-setup", methods=["GET", "PUT"])
+@admin_required
+def baseline_setup():
+    sector = get_active_sector() or DEFAULT_SECTOR
+    if request.method == "GET":
+        return jsonify(_baseline_setup_payload(sector))
+
+    data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    values = data.get("values") or []
+    complete = bool(data.get("complete", False))
+    if not isinstance(values, list):
+        return jsonify({"error": "The values field must be a list."}), 400
+
+    sector_config = get_sector_config(sector)
+    allowed_roles = set(sector_config["roles"])
+    required_pairs = {(role, feature) for role in allowed_roles for feature in ROLE_BASELINE_FEATURES}
+    seen_pairs = set()
+    valid_updates = []
+    username = session.get("username")
+
+    for entry in values:
+        if not isinstance(entry, dict):
+            return jsonify({"error": "Each baseline value entry must be an object."}), 400
+        role = str(entry.get("role", "")).strip().lower()
+        feature = str(entry.get("feature", "")).strip()
+        if role not in allowed_roles:
+            return jsonify({"error": f"Unknown role in baseline configuration: {role}"}), 400
+        if feature not in ROLE_BASELINE_FEATURES:
+            return jsonify({"error": f"Unknown baseline feature: {feature}"}), 400
+        seen_pairs.add((role, feature))
+        value = entry.get("value")
+        if value is None:
+            if complete:
+                return jsonify({"error": f"A value is required for {role}/{feature} before completion."}), 400
+            valid_updates.append((role, feature, None))
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return jsonify({"error": f"Baseline value for {role}/{feature} must be a finite number."}), 400
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return jsonify({"error": f"Baseline value for {role}/{feature} must be finite."}), 400
+        spec = ROLE_BASELINE_FEATURES[feature]
+        if numeric < spec["min"] or numeric > spec["max"]:
+            return jsonify({
+                "error": f"Baseline value for {role}/{feature} must be within {spec['min']}..{spec['max']}."
+            }), 400
+        valid_updates.append((role, feature, numeric))
+
+    if complete:
+        missing = sorted(required_pairs - seen_pairs)
+        if missing:
+            missing_text = ", ".join(f"{role}/{feature}" for role, feature in missing)
+            return jsonify({"error": f"Baseline setup is incomplete. Missing values for: {missing_text}"}), 400
+
+    conn = connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = {
+            (row[0], row[1]): row[2] for row in conn.execute(
+                "SELECT role, feature, value FROM role_baselines WHERE sector = ?",
+                (sector,),
+            )
+        }
+        for role, feature, value in valid_updates:
+            old_value = existing.get((role, feature))
+            if value is None:
+                conn.execute(
+                    "DELETE FROM role_baselines WHERE sector = ? AND role = ? AND feature = ?",
+                    (sector, role, feature),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO role_baselines (sector, role, feature, value, updated_by, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(sector, role, feature)
+                    DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+                    """,
+                    (sector, role, feature, value, username),
+                )
+            if old_value != value:
+                    conn.execute(
+                        "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+                        (
+                            username,
+                            "BASELINE_UPDATED",
+                            f"role={role}, feature={feature}, "
+                            f"old={old_value if old_value is not None else 'null'}, "
+                            f"new={value if value is not None else 'null'}, "
+                            f"admin={username}, sector={sector}",
+                        ),
+                    )
+        completed = 1 if complete else 0
+        conn.execute(
+            """
+            INSERT INTO baseline_setup_status (sector, completed, completed_by, completed_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(sector) DO UPDATE SET
+                completed = excluded.completed,
+                completed_by = excluded.completed_by,
+                completed_at = excluded.completed_at
+            """,
+            (sector, completed, username),
+        )
+        if complete:
+            conn.execute(
+                "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+                (
+                    username,
+                    "BASELINE_SETUP_COMPLETED",
+                    f"sector={sector}, completed_by={username}",
+                ),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _invalidate_baseline_state()
+    return jsonify({"status": "saved", "configured": bool(complete)})
+
+
+@app.route("/api/baseline-setup/reset", methods=["POST"])
+@admin_required
+def baseline_setup_reset():
+    sector = get_active_sector() or DEFAULT_SECTOR
+    username = session.get("username")
+    conn = connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM role_baselines WHERE sector = ?", (sector,))
+        conn.execute(
+            """
+            INSERT INTO baseline_setup_status (sector, completed, completed_by, completed_at)
+            VALUES (?, 0, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(sector) DO UPDATE SET
+                completed = 0,
+                completed_by = excluded.completed_by,
+                completed_at = excluded.completed_at
+            """,
+            (sector, username),
+        )
+        conn.execute(
+            "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+            (username, "BASELINE_RESET", f"sector={sector}, admin={username}"),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _invalidate_baseline_state()
+    return jsonify({"status": "reset"})
 
 
 @app.route("/api/compliance/alerts")

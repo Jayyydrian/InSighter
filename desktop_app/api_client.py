@@ -160,6 +160,15 @@ class ApiClient:
     def get_integrations(self):
         return self._get("/api/integrations")
 
+    def get_baseline_setup(self):
+        return self._baseline_request("GET", "/api/baseline-setup")
+
+    def save_baseline_setup(self, payload):
+        return self._baseline_request("PUT", "/api/baseline-setup", json=payload)
+
+    def reset_baseline_setup(self):
+        return self._baseline_request("POST", "/api/baseline-setup/reset", json={})
+
     def ingest_events(self):
         return self._post("/api/ingest")
 
@@ -182,6 +191,20 @@ class ApiClient:
         return self._get("/api/simulate")
 
     # ── Internal ─────────────────────────────────────────────────────────
+    def _baseline_request(self, method, path, **kwargs):
+        response = self._request(method, path, **kwargs)
+        if response.status_code == 401:
+            raise ApiError(401, "Session expired. Please log in again.")
+        if response.status_code == 403:
+            raise ApiError(403, "Access restricted to administrator accounts.")
+        if response.status_code != 200:
+            try:
+                message = response.json().get("error", f"Request to {path} failed.")
+            except ValueError:
+                message = f"Request to {path} failed."
+            raise ApiError(response.status_code, message)
+        return self._json(response, path)
+
     def _get(self, path, timeout=None):
         kwargs = {} if timeout is None else {"timeout": timeout}
         resp = self._request("GET", path, **kwargs)
@@ -191,6 +214,21 @@ class ApiClient:
             raise ApiError(403, "Access restricted to administrator accounts.")
         if resp.status_code != 200:
             raise ApiError(resp.status_code, f"Request to {path} failed.")
+        return self._json(resp, path)
+
+    def _put(self, path, payload=None, timeout=None):
+        kwargs = {} if timeout is None else {"timeout": timeout}
+        resp = self._request("PUT", path, json=payload, **kwargs)
+        if resp.status_code == 401:
+            raise ApiError(401, "Session expired. Please log in again.")
+        if resp.status_code == 403:
+            raise ApiError(403, "Access restricted to administrator accounts.")
+        if resp.status_code != 200:
+            try:
+                message = resp.json().get("error", f"Request to {path} failed.")
+            except ValueError:
+                message = f"Request to {path} failed."
+            raise ApiError(resp.status_code, message)
         return self._json(resp, path)
 
     def _post(self, path, payload=None, timeout=None):
