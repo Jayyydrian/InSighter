@@ -6,7 +6,12 @@ from sklearn.ensemble import IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
 from privacy import sanitize_event
-from role_baseline import attach_baseline_deviations, attach_roles, calculate_role_baselines
+from role_baseline import (
+    attach_baseline_deviations,
+    attach_roles,
+    calculate_role_baselines,
+    get_effective_role_baselines,
+)
 from database import connect
 from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster
 from simulation import activity_values
@@ -100,7 +105,8 @@ def _run_ensemble(df, contamination=CONTAMINATION, ocsvm_nu=None, fit_df=None, f
         if fit_df is None:
             training.loc[group.index, "is_anomaly"] = scores[1]
 
-    baselines, overall = calculate_role_baselines(training)
+    sector = get_active_sector() or DEFAULT_SECTOR
+    baselines, overall = get_effective_role_baselines(training, sector)
     df = attach_baseline_deviations(df, baselines, overall)
     df["final_score"] = (
         IF_WEIGHT * df["if_score"]
@@ -150,6 +156,11 @@ def score_users():
     summary["role_baseline_score"] = summary["role_baseline_score"].round(1)
 
     return summary.sort_values("risk_score", ascending=False).to_dict(orient="records")
+
+
+def get_learned_role_baselines(events):
+    """Return the same non-anomalous role means used by the scoring pipeline."""
+    return calculate_role_baselines(_run_ensemble(events.copy()))
 
 
 def get_recent_alerts():

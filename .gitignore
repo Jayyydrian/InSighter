@@ -221,3 +221,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+database.db-journal
+*.db-journal
