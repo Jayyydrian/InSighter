@@ -7,12 +7,6 @@ SECTORS = {
         "roster_distribution": {"researcher": 5, "intern": 3, "admin_staff": 2, "it_staff": 2},
         "data_categories": ("projects", "private_documents", "intellectual_property", "pii"),
     },
-    "sme_startup": {
-        "label": "SME & Startup",
-        "roles": ("finance", "hr", "it_admin"),
-        "roster_distribution": {"finance": 8, "hr": 6, "it_admin": 6},
-        "data_categories": ("financial_transactions", "client_data", "employee_records"),
-    },
     "uav_disaster_response": {
         "label": "UAV Disaster Response",
         "roles": ("drone_operator",),
@@ -20,11 +14,12 @@ SECTORS = {
         "data_categories": ("drone_platform_access", "disaster_data"),
     },
 }
-DEFAULT_SECTOR = "sme_startup"
+DEFAULT_SECTOR = "private_school"
 
 
 def get_sector_config(sector=None):
-    return SECTORS.get(sector or DEFAULT_SECTOR, SECTORS[DEFAULT_SECTOR])
+    normalized = sector or DEFAULT_SECTOR
+    return SECTORS.get(normalized, SECTORS[DEFAULT_SECTOR])
 
 
 def get_sector_roster(sector=None):

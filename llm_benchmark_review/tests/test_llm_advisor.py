@@ -80,9 +80,9 @@ ALERT_1365 = {
 ALERT_2393 = {
     **ALERT_1365,
     "id": 2393,
-    "user": "hr_05",
-    "role": "hr",
-    "data_category": "financial_transactions",
+    "user": "researcher_05",
+    "role": "researcher",
+    "data_category": "projects",
     "files_accessed": 15,
     "data_transferred_mb": 31.13,
     "failed_logins": 0,
@@ -105,13 +105,13 @@ ALERT_1394 = {
 ALERT_2329 = {
     **ALERT_2393,
     "id": 2329,
-    "user": "hr_01",
-    "role": "hr",
+    "user": "researcher_01",
+    "role": "researcher",
     "severity": "CRITICAL",
     "description": "off-hours login, accessed 103 files, transferred 793 MB, 9 failed logins",
     "login_hour": 0,
     "off_hours_access": 1,
-    "data_category": "employee_records",
+    "data_category": "pii",
     "files_accessed": 103,
     "data_transferred_mb": 793.26,
     "failed_logins": 9,
@@ -251,8 +251,8 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         with patch("llm_advisor.requests.post", return_value=downgraded):
             result = llm_advisor.explain_alert(
                 ALERT_2329,
-                "sme_startup",
-                {"data_categories": ["financial_transactions", "client_data", "employee_records"]},
+                "private_school",
+                {"data_categories": ["projects", "private_documents", "pii"]},
             )
 
         self.assertFalse(result["available"])
@@ -266,8 +266,8 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         with patch("llm_advisor.requests.post", return_value=verbatim):
             corrected_result = llm_advisor.explain_alert(
                 ALERT_2329,
-                "sme_startup",
-                {"data_categories": ["financial_transactions", "client_data", "employee_records"]},
+                "private_school",
+                {"data_categories": ["projects", "private_documents", "pii"]},
             )
 
         self.assertTrue(corrected_result["available"])
@@ -382,30 +382,30 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         self.assertTrue(result["available"])
 
     def test_matching_event_category_allows_review_with_access_records(self):
-        alert = {**ALERT_2393, "data_category": "financial_transactions"}
+        alert = {**ALERT_2393, "data_category": "projects"}
         response = _mock_ollama_response(
-            explanation="The event is tagged as financial transactions.",
-            recommendation="Review the financial transactions and access records for this event.",
+            explanation="The event is tagged as projects.",
+            recommendation="Review the projects and access records for this event.",
         )
         with patch("llm_advisor.requests.post", return_value=response):
             result = llm_advisor.explain_alert(
                 alert,
-                "sme_startup",
-                {"data_categories": ["financial_transactions", "client_data", "employee_records"]},
+                "private_school",
+                {"data_categories": ["projects", "private_documents", "pii"]},
             )
 
         self.assertTrue(result["available"])
 
     def test_matching_event_category_cannot_become_a_category_specific_log_source(self):
-        alert = {**ALERT_2393, "data_category": "financial_transactions"}
+        alert = {**ALERT_2393, "data_category": "projects"}
         response = _mock_ollama_response(
-            recommendation="Review the financial transactions logs for this user."
+            recommendation="Review the projects logs for this user."
         )
         with patch("llm_advisor.requests.post", return_value=response):
             result = llm_advisor.explain_alert(
                 alert,
-                "sme_startup",
-                {"data_categories": ["financial_transactions", "client_data", "employee_records"]},
+                "private_school",
+                {"data_categories": ["projects", "private_documents", "pii"]},
             )
 
         self.assertFalse(result["available"])
@@ -413,14 +413,14 @@ class LlmAdvisorUnitTest(unittest.TestCase):
     def test_alert_2393_rejects_unreported_sector_categories(self):
         response = _mock_ollama_response(
             recommendation=(
-                "Review the HR employee's access to client_data and employee_records."
+                "Review the researcher employee's access to private_documents and pii."
             )
         )
         with patch("llm_advisor.requests.post", return_value=response):
             result = llm_advisor.explain_alert(
                 ALERT_2393,
-                "sme_startup",
-                {"data_categories": ["financial_transactions", "client_data", "employee_records"]},
+                "private_school",
+                {"data_categories": ["projects", "private_documents", "intellectual_property", "pii"]},
             )
 
         self.assertFalse(result["available"])
@@ -499,8 +499,8 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         with patch("llm_advisor.requests.post", return_value=response):
             result = llm_advisor.explain_alert(
                 {**ALERT_5140, "login_hour": 14},
-                "sme_startup",
-                {"data_categories": ["financial_transactions"]},
+                "private_school",
+                {"data_categories": ["projects"]},
             )
 
         self.assertFalse(result["available"])
@@ -573,8 +573,8 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         with patch("llm_advisor.requests.post", return_value=response):
             result = llm_advisor.explain_alert(
                 {**ALERT_5140, "login_hour": 21},
-                "sme_startup",
-                {"data_categories": ["employee_records"]},
+                "private_school",
+                {"data_categories": ["pii"]},
             )
 
         self.assertFalse(result["available"])
@@ -702,7 +702,7 @@ class LlmAdvisorUnitTest(unittest.TestCase):
     def test_timeout_logs_failure_without_raising(self):
         with patch("llm_advisor.requests.post", side_effect=requests.exceptions.Timeout()):
             result = llm_advisor.explain_alert(
-                SAMPLE_ALERT, "sme_startup", {"data_categories": []}
+                SAMPLE_ALERT, "private_school", {"data_categories": []}
             )
 
         with open(self.usage_log_path, encoding="utf-8") as log_file:
@@ -715,13 +715,13 @@ class LlmAdvisorUnitTest(unittest.TestCase):
 
     def test_connection_error_is_graceful(self):
         with patch("llm_advisor.requests.post", side_effect=requests.exceptions.ConnectionError()):
-            result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
+            result = llm_advisor.explain_alert(SAMPLE_ALERT, "private_school", {"data_categories": []})
         self.assertFalse(result["available"])
         self.assertIn("not running", result["reason"])
 
     def test_timeout_is_graceful(self):
         with patch("llm_advisor.requests.post", side_effect=requests.exceptions.Timeout()):
-            result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
+            result = llm_advisor.explain_alert(SAMPLE_ALERT, "private_school", {"data_categories": []})
         self.assertFalse(result["available"])
         self.assertIn("did not answer within", result["reason"])
 
@@ -731,7 +731,7 @@ class LlmAdvisorUnitTest(unittest.TestCase):
             "error": f"model '{llm_advisor.OLLAMA_MODEL}' not found"
         }
         with patch("llm_advisor.requests.post", return_value=resp):
-            result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
+            result = llm_advisor.explain_alert(SAMPLE_ALERT, "private_school", {"data_categories": []})
         self.assertFalse(result["available"])
         self.assertEqual(
             result["reason"],
@@ -747,7 +747,7 @@ class LlmAdvisorUnitTest(unittest.TestCase):
         resp = MagicMock(status_code=200, ok=True)
         resp.json.return_value = {"response": "not valid json at all"}
         with patch("llm_advisor.requests.post", return_value=resp):
-            result = llm_advisor.explain_alert(SAMPLE_ALERT, "sme_startup", {"data_categories": []})
+            result = llm_advisor.explain_alert(SAMPLE_ALERT, "private_school", {"data_categories": []})
         self.assertFalse(result["available"])
         self.assertIsNone(result["explanation"])
 

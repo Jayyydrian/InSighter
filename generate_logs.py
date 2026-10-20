@@ -2,7 +2,7 @@ import random
 
 from database import connect
 from privacy import sanitize_event
-from sector_config import get_active_sector, get_sector_config, get_sector_roster
+from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster
 from simulation import activity_values
 
 EVENTS_PER_USER = 120
@@ -27,7 +27,7 @@ def generate():
         )
     """)
 
-    sector = get_active_sector(conn)
+    sector = get_active_sector(conn) or DEFAULT_SECTOR
     sector_config = get_sector_config(sector)
     categories = list(sector_config["data_categories"])
     users = get_sector_roster(sector)

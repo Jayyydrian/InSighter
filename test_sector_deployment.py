@@ -104,7 +104,7 @@ class SectorDeploymentTest(unittest.TestCase):
         self.assertEqual(stale_roles, {"researcher", "intern", "admin_staff", "it_staff"})
 
     def test_live_simulation_varies_hot_users_and_activity(self):
-        self._set_sector("sme_startup")
+        self._set_sector("private_school")
         generate()
         scores_before = {row["user"]: row["risk_score"] for row in score_users()}
         observed = [inject_live_event() for _ in range(40)]

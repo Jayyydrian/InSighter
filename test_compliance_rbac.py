@@ -28,7 +28,7 @@ class ComplianceRbacTest(unittest.TestCase):
         with closing(database.connect()) as conn:
             conn.execute(
                 "INSERT INTO logs (user, role, data_category) VALUES (?,?,?)",
-                ("alice", "finance", "financial_transactions"),
+                ("alice", "researcher", "projects"),
             )
             conn.commit()
         cls.original_alerts = app.get_recent_alerts

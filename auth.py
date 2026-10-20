@@ -14,6 +14,7 @@ Implements the Authentication Tier described in Chapter 3:
 
 import bcrypt
 import hashlib
+import logging
 import math
 import time
 from functools import wraps
@@ -63,7 +64,7 @@ def init_users_table():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS deployment_config (
             id                      INTEGER PRIMARY KEY CHECK (id = 1),
-            sector                  TEXT DEFAULT 'sme_startup',
+            sector                  TEXT DEFAULT 'private_school',
             threshold_high          REAL DEFAULT 45,
             threshold_medium        REAL DEFAULT 30,
             log_targets             TEXT DEFAULT 'active_directory,google_workspace,microsoft_365',
@@ -74,7 +75,7 @@ def init_users_table():
     """)
     deployment_columns = {row[1] for row in conn.execute("PRAGMA table_info(deployment_config)")}
     if "sector" not in deployment_columns:
-        conn.execute("ALTER TABLE deployment_config ADD COLUMN sector TEXT DEFAULT 'sme_startup'")
+        conn.execute("ALTER TABLE deployment_config ADD COLUMN sector TEXT DEFAULT 'private_school'")
     legacy = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='uav_config'"
     ).fetchone()
@@ -107,6 +108,21 @@ def init_users_table():
     row = conn.execute("SELECT COUNT(*) FROM deployment_config").fetchone()[0]
     if row == 0:
         conn.execute("INSERT INTO deployment_config (id, sector) VALUES (1, ?)", (DEFAULT_SECTOR,))
+    elif conn.execute("SELECT sector FROM deployment_config WHERE id = 1").fetchone()[0] not in SECTORS:
+        previous_sector = conn.execute("SELECT sector FROM deployment_config WHERE id = 1").fetchone()[0]
+        logging.getLogger(__name__).warning(
+            "Unsupported deployment sector %r migrated to %s",
+            previous_sector,
+            DEFAULT_SECTOR,
+        )
+        conn.execute(
+            "UPDATE deployment_config SET sector = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+            (DEFAULT_SECTOR,),
+        )
+        conn.execute(
+            "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+            ("system", "SECTOR_MIGRATED", f"sector={previous_sector};new_sector={DEFAULT_SECTOR}"),
+        )
     conn.commit()
 
     seed_users = [

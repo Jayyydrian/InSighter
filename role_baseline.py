@@ -23,7 +23,7 @@ ROLE_BASELINE_FEATURES = {
         "label": "Average data transferred per event",
         "unit": "MB/event",
         "min": 0.0,
-        "max": 1214.0,
+        "max": 1202.0,
     },
     "failed_logins": {
         "label": "Average failed logins per event",
@@ -39,9 +39,9 @@ ROLE_BASELINE_FEATURES = {
     },
 }
 
-# Per-event p99s (private school / SME / UAV): files 103.22 / 102.00 / 81.00,
-# transfer MB 800.7861 / 809.0034 / 529.8437, failed logins 9 / 9 / 6.81,
-# and off-hours 1 / 1 / 1. Numeric maxima use 1.5x the largest p99,
+# Per-event p99s (private school / UAV): files 103.22 / 81.00,
+# transfer MB 800.7861 / 529.8437, failed logins 9 / 6.81,
+# and off-hours 1 / 1. Numeric maxima use 1.5x the largest p99,
 # rounded up where needed; off-hours is capped by its indicator range [0, 1].
 
 

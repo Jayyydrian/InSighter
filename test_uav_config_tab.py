@@ -24,8 +24,8 @@ def wait_for(app, predicate, timeout=3):
 class FakeClient:
     def __init__(self):
         self.config = {
-            "sector": "sme_startup",
-            "taxonomy": {"roles": ["finance", "hr", "it_admin"], "data_categories": ["client_data"]},
+            "sector": "private_school",
+            "taxonomy": {"roles": ["researcher", "intern", "admin_staff", "it_staff"], "data_categories": ["projects", "private_documents", "intellectual_property", "pii"]},
             "threshold_high": 45,
             "threshold_medium": 30,
             "sync_interval_minutes": 15,
