@@ -30,7 +30,7 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 
 ## What it does
 
-- Generates sector-specific synthetic activity for 12 private-school users, 20 SME/startup users, or 6 UAV disaster-response operators
+- Generates sector-specific synthetic activity for 12 private-school users or 6 UAV disaster-response operators
 - Runs Isolation Forest + One-Class SVM (weighted 0.6/0.4 ensemble) on each user's behavior
 - Builds role-aware behavioral baselines and adds baseline deviation to risk scores
 - Varies anomalous and routine activity per live simulation tick; UAV simulation uses mission-appropriate numeric profiles and alert language
@@ -40,6 +40,22 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 - Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
 - Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
 
+## Supported sectors and legacy databases
+
+The supported deployment sectors are `private_school` and `uav_disaster_response`.
+`private_school` is the default for new deployments.
+
+When an existing database contains the removed `sme_startup` sector, startup switches
+the deployment to `private_school` and writes one `SECTOR_MIGRATED` audit entry with
+actor `system`. Existing logs and legacy `sme_startup` rows in `role_baselines` and
+`baseline_setup_status` are retained, but the legacy baseline rows are unused by the
+active sector. Existing logs remain stored but do not provide dashboard data for the
+new sector; an administrator should reseed synthetic data so the dashboard shows
+activity for the `private_school` roster.
+
+Benchmark records under `llm_benchmark_review/` are historical artifacts and include
+SME/startup data; they do not indicate a currently supported sector.
+
 ## Admin role baseline setup
 
 The admin-only first-run setup lets an administrator declare a center of normal for each role and feature. A sector is either **not configured** (built-in learned defaults are used) or **configured**. Values and setup status are stored per sector and survive log reseeding.
@@ -48,7 +64,7 @@ A declared value replaces the learned per-role mean only in the role-deviation s
 
 The detectors learn each role from that role's own activity. Applying a uniform scale to both fit and scored inputs therefore does not reliably move detector judgment to an administrator's center; prototype measurements produced inconsistent, small changes, so detector-input transforms were rejected. In one generated-data experiment initialized at the selected role's generated data-transfer mean, doubling or halving the baseline moved scores by less than 1 point and changed at most one user's risk level. This result is indicative, not a guarantee for other data.
 
-Values are stored and scored per logged event (all minimums are 0): `files_accessed` max 155 files/event (ceil of 1.5 x largest sector p99, 103.22); `data_transferred_mb` max 1,214 MB/event (ceil of 1.5 x 809.0034); and `failed_logins` max 13.5 attempts/event (1.5 x 9). The p99 values are from the three generated sectors. `off_hours_access` is a fraction of events in [0, 1]; its p99 is 1 and its maximum is capped at the indicator's natural maximum. In the desktop wizard, `files_accessed` displays as files per event, `data_transferred_mb` as MB per event, `failed_logins` as failed logins per 100 events, and `off_hours_access` as a percentage of events; displayed whole numbers do not change the per-event values stored or scored. A soft warning appears when a declared value is more than 5x above or below the observed role mean; warnings never block saving.
+Values are stored and scored per logged event (all minimums are 0): `files_accessed` max 155 files/event (ceil of 1.5 x largest sector p99, 103.22); `data_transferred_mb` max 1,202 MB/event (ceil of 1.5 x 800.7861); and `failed_logins` max 13.5 attempts/event (1.5 x 9). The p99 values are from the supported generated sectors. `off_hours_access` is a fraction of events in [0, 1]; its p99 is 1 and its maximum is capped at the indicator's natural maximum. In the desktop wizard, `files_accessed` displays as files per event, `data_transferred_mb` as MB per event, `failed_logins` as failed logins per 100 events, and `off_hours_access` as a percentage of events; displayed whole numbers do not change the per-event values stored or scored. A soft warning appears when a declared value is more than 5x above or below the observed role mean; warnings never block saving.
 
 **Reset to defaults** removes that sector's declared values and returns it to **not configured**. Setup completion, changed values, and resets are recorded in the audit log as `BASELINE_SETUP_COMPLETED`, `BASELINE_UPDATED`, and `BASELINE_RESET`. A value far from the activity actually observed for its role will mostly raise that role's role-deviation signal for everyone in that role.
 

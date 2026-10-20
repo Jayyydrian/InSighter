@@ -31,16 +31,16 @@ def wait_for(app, predicate, timeout=5):
     return predicate()
 
 
-def baseline_payload(status="not_configured", role_name="finance", label_override=None):
+def baseline_payload(status="not_configured", role_name="researcher", label_override=None):
     fields = [
         ("files_accessed", "Average files accessed per event", "files/event", 5, 10, 155),
-        ("data_transferred_mb", "Average data transferred per event", "MB/event", 20, 20, 1214),
+        ("data_transferred_mb", "Average data transferred per event", "MB/event", 20, 20, 1202),
         ("failed_logins", "Average failed logins per event", "attempts/event", 0.5, 0.3, 13.5),
         ("off_hours_access", "Off-hours event fraction", "fraction of events", 0.2, 0.1, 1),
     ]
     roles = []
     items = []
-    for role in (role_name, "it_admin"):
+    for role in (role_name, "it_staff"):
         features = []
         for feature, label, unit, default, observed, maximum in fields:
             item = {
@@ -60,7 +60,7 @@ def baseline_payload(status="not_configured", role_name="finance", label_overrid
             items.append(item)
         roles.append({"role": role, "features": features})
     return {
-        "sector": "sme_startup",
+        "sector": "private_school",
         "status": status,
         "completed_by": None,
         "completed_at": None,
@@ -98,7 +98,7 @@ def private_school_payload(status="not_configured"):
 
 
 class FakeClient:
-    def __init__(self, status="not_configured", role_name="finance", label_override=None):
+    def __init__(self, status="not_configured", role_name="researcher", label_override=None):
         self.role = "admin"
         self.username = "test-admin"
         self.connection_monitor = None
@@ -430,7 +430,7 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
     def test_wizard_defaults_navigation_review_warning_and_finish(self):
         client, tab = self.make_tab()
         self.assertFalse(tab._configured)
-        field = tab._controls[("finance", "data_transferred_mb")]
+        field = tab._controls[("researcher", "data_transferred_mb")]
         self.assertEqual(field["spin"].value(), field["default"])
         self.assertEqual(tab.help_label.text(), HELP_TEXT)
         unit_labels = [label.text() for label in tab.findChildren(QLabel)]
@@ -463,14 +463,14 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
 
     def test_use_defaults_restores_current_role_values(self):
         _client, tab = self.make_tab()
-        field = tab._controls[("finance", "files_accessed")]
+        field = tab._controls[("researcher", "files_accessed")]
         field["spin"].setValue(22)
-        tab._use_defaults("finance")
+        tab._use_defaults("researcher")
         self.assertEqual(field["spin"].value(), field["default"])
 
     def test_configured_refresh_preserves_edits_and_customized_marker(self):
         client, tab = self.make_tab(status="configured")
-        field = tab._controls[("finance", "data_transferred_mb")]
+        field = tab._controls[("researcher", "data_transferred_mb")]
         self.assertFalse(tab.save_button.isEnabled())
         field["spin"].setValue(120)
         self.assertTrue(tab._dirty)
@@ -498,7 +498,7 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
 
     def test_failed_save_retains_edits_and_displays_server_message_as_plain_text(self):
         client, tab = self.make_tab(status="configured")
-        field = tab._controls[("finance", "files_accessed")]
+        field = tab._controls[("researcher", "files_accessed")]
         field["spin"].setValue(12)
         client.save_error = ApiError(400, "<img src=x onerror=alert(1)> rejected")
         tab._save()
@@ -511,7 +511,7 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
     def test_edits_during_save_remain_unsaved(self):
         client, tab = self.make_tab(status="configured")
         client.save_delay = 0.15
-        field = tab._controls[("finance", "files_accessed")]
+        field = tab._controls[("researcher", "files_accessed")]
         field["spin"].setValue(12)
         tab._save()
         field["spin"].setValue(13)
@@ -539,7 +539,7 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
     def test_server_text_uses_plain_labels_and_warning_appears_next_to_field(self):
         client, tab = self.make_tab(
             status="configured",
-            role_name="<b>finance</b>",
+            role_name="<b>researcher</b>",
             label_override="<script>metric</script>",
         )
         title = next(
@@ -547,7 +547,7 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
             if label.text() == "<script>metric</script>"
         )
         self.assertEqual(title.textFormat(), Qt.TextFormat.PlainText)
-        first_role = "<b>finance</b>"
+        first_role = "<b>researcher</b>"
         field = tab._controls[(first_role, "data_transferred_mb")]
         field["spin"].setValue(121)
         self.assertFalse(field["warning"].isHidden())

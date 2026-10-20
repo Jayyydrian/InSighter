@@ -27,7 +27,7 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
         database.DB_PATH = self.database_path
         database.ensure_database()
         init_users_table()
-        self.set_sector("sme_startup")
+        self.set_sector("private_school")
 
     def tearDown(self):
         database.DB_PATH = self.previous_database_path
@@ -72,7 +72,7 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
     def test_feature_units_and_data_grounded_bounds(self):
         expected = {
             "files_accessed": ("files/event", 0, 155),
-            "data_transferred_mb": ("MB/event", 0, 1214),
+            "data_transferred_mb": ("MB/event", 0, 1202),
             "failed_logins": ("attempts/event", 0, 13.5),
             "off_hours_access": ("fraction of events", 0, 1),
         }
@@ -84,36 +84,44 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
                 self.assertEqual(spec["max"], maximum)
 
     def test_sector_isolation_values_survive_reseed_and_reset(self):
+        legacy_sector = "legacy_sector"
         with closing(database.connect()) as conn:
             conn.execute(
                 "INSERT INTO role_baselines (sector, role, feature, value) VALUES "
-                "('sme_startup', 'finance', 'files_accessed', 7), "
-                "('private_school', 'researcher', 'files_accessed', 9)"
+                "(?, 'researcher', 'files_accessed', 7), "
+                "('private_school', 'researcher', 'files_accessed', 9)",
+                (legacy_sector,),
             )
             conn.execute(
                 "INSERT INTO baseline_setup_status (sector, completed) VALUES "
-                "('sme_startup', 1), ('private_school', 1)"
+                "(?, 1), ('private_school', 1)",
+                (legacy_sector,),
             )
             conn.commit()
 
         self.assertEqual(
-            role_baseline.get_declared_role_baselines("sme_startup")["finance"]["files_accessed"],
+            role_baseline.get_declared_role_baselines(legacy_sector)["researcher"]["files_accessed"],
             7,
         )
-        self.assertNotIn("finance", role_baseline.get_declared_role_baselines("private_school"))
+        self.assertEqual(
+            role_baseline.get_declared_role_baselines("private_school")["researcher"]["files_accessed"],
+            9,
+        )
 
         generate()
 
         with closing(database.connect()) as conn:
             self.assertEqual(
                 conn.execute(
-                    "SELECT value FROM role_baselines WHERE sector='sme_startup'"
+                    "SELECT value FROM role_baselines WHERE sector=? AND role='researcher'",
+                    (legacy_sector,),
                 ).fetchone()[0],
                 7,
             )
             self.assertEqual(
                 conn.execute(
-                    "SELECT completed FROM baseline_setup_status WHERE sector='sme_startup'"
+                    "SELECT completed FROM baseline_setup_status WHERE sector=?",
+                    (legacy_sector,),
                 ).fetchone()[0],
                 1,
             )
@@ -123,21 +131,23 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
         with closing(database.connect()) as conn:
             self.assertEqual(
                 conn.execute(
-                    "SELECT COUNT(*) FROM role_baselines WHERE sector='sme_startup'"
+                    "SELECT COUNT(*) FROM role_baselines WHERE sector=?",
+                    (legacy_sector,),
                 ).fetchone()[0],
-                0,
+                1,
             )
             self.assertEqual(
                 conn.execute(
-                    "SELECT completed FROM baseline_setup_status WHERE sector='sme_startup'"
+                    "SELECT completed FROM baseline_setup_status WHERE sector=?",
+                    (legacy_sector,),
                 ).fetchone()[0],
-                0,
+                1,
             )
             self.assertEqual(
                 conn.execute(
-                    "SELECT value FROM role_baselines WHERE sector='private_school'"
+                    "SELECT COUNT(*) FROM role_baselines WHERE sector='private_school'"
                 ).fetchone()[0],
-                9,
+                0,
             )
         self.assertEqual(
             self.admin_client().get("/api/baseline-setup").get_json()["status"],
@@ -172,16 +182,16 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
         with closing(database.connect()) as conn:
             conn.execute(
                 "INSERT INTO baseline_setup_status (sector, completed) VALUES "
-                "('sme_startup', 1)"
+                "('private_school', 1)"
             )
             conn.execute(
                 "INSERT INTO role_baselines (sector, role, feature, value) "
-                "VALUES ('sme_startup', 'alpha', 'data_transferred_mb', 80)"
+                "VALUES ('private_school', 'alpha', 'data_transferred_mb', 80)"
             )
             conn.commit()
 
         effective, fallback = role_baseline.get_effective_role_baselines(
-            training, "sme_startup"
+            training, "private_school"
         )
         after = role_baseline.attach_baseline_deviations(
             same_activity, effective, fallback
@@ -199,11 +209,11 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
             events.copy(),
         )
         self.assertFalse(
-            role_baseline.get_declared_role_baselines("sme_startup")
+            role_baseline.get_declared_role_baselines("private_school")
         )
 
         from app import _baseline_setup_payload
-        payload = _baseline_setup_payload("sme_startup")
+        payload = _baseline_setup_payload("private_school")
         after_hint = model._run_ensemble(
             events.copy(),
         )
@@ -257,11 +267,11 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
             with closing(database.connect()) as conn:
                 conn.execute(
                     "INSERT INTO baseline_setup_status (sector, completed) "
-                    "VALUES ('sme_startup', 1)"
+                    "VALUES ('private_school', 1)"
                 )
                 conn.execute(
                     "INSERT INTO role_baselines (sector, role, feature, value) "
-                    "VALUES ('sme_startup', 'finance', 'data_transferred_mb', 120)"
+                    "VALUES ('private_school', 'researcher', 'data_transferred_mb', 120)"
                 )
                 conn.commit()
             model._run_ensemble(events.copy())
@@ -279,7 +289,7 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
             conn.execute(
                 "INSERT INTO logs (user, login_hour, files_accessed, data_transferred_mb, "
                 "failed_logins, off_hours_access, role) "
-                "VALUES ('outside_role', 12, 4, 10, 0, 0, 'researcher')"
+                "VALUES ('outside_role', 12, 4, 10, 0, 0, 'outside_role')"
             )
             conn.commit()
         self.assertNotIn("outside_role", {row["user"] for row in model.score_users()})
@@ -347,7 +357,7 @@ class RoleBaselineApiTest(unittest.TestCase):
         database.DB_PATH = self.database_path
         database.ensure_database()
         init_users_table()
-        self.set_sector("sme_startup")
+        self.set_sector("private_school")
 
     def tearDown(self):
         database.DB_PATH = self.previous_database_path
@@ -415,15 +425,15 @@ class RoleBaselineApiTest(unittest.TestCase):
         client = self.admin_client()
         bad_values = [
             ("unknown role", {"role": "x", "feature": "files_accessed", "value": 1}),
-            ("unknown feature", {"role": "finance", "feature": "x", "value": 1}),
-            ("nan", {"role": "finance", "feature": "files_accessed", "value": float("nan")}),
-            ("infinity", {"role": "finance", "feature": "files_accessed", "value": float("inf")}),
-            ("string", {"role": "finance", "feature": "files_accessed", "value": "4"}),
-            ("boolean", {"role": "finance", "feature": "files_accessed", "value": True}),
-            ("negative", {"role": "finance", "feature": "files_accessed", "value": -1}),
-            ("below minimum", {"role": "finance", "feature": "files_accessed", "value": -0.001}),
-            ("above maximum", {"role": "finance", "feature": "files_accessed", "value": 155.01}),
-            ("off-hours above one", {"role": "finance", "feature": "off_hours_access", "value": 1.01}),
+            ("unknown feature", {"role": "researcher", "feature": "x", "value": 1}),
+            ("nan", {"role": "researcher", "feature": "files_accessed", "value": float("nan")}),
+            ("infinity", {"role": "researcher", "feature": "files_accessed", "value": float("inf")}),
+            ("string", {"role": "researcher", "feature": "files_accessed", "value": "4"}),
+            ("boolean", {"role": "researcher", "feature": "files_accessed", "value": True}),
+            ("negative", {"role": "researcher", "feature": "files_accessed", "value": -1}),
+            ("below minimum", {"role": "researcher", "feature": "files_accessed", "value": -0.001}),
+            ("above maximum", {"role": "researcher", "feature": "files_accessed", "value": 155.01}),
+            ("off-hours above one", {"role": "researcher", "feature": "off_hours_access", "value": 1.01}),
         ]
         for label, entry in bad_values:
             with self.subTest(label=label):
@@ -437,32 +447,32 @@ class RoleBaselineApiTest(unittest.TestCase):
                 accepted = client.put(
                     "/api/baseline-setup",
                     json={"complete": False, "values": [{
-                        "role": "finance", "feature": feature, "value": 0,
+                        "role": "researcher", "feature": feature, "value": 0,
                     }]},
                 )
                 self.assertEqual(accepted.status_code, 200)
                 with closing(database.connect()) as conn:
                     value = conn.execute(
-                        "SELECT value FROM role_baselines WHERE sector='sme_startup' "
-                        "AND role='finance' AND feature=?",
+                        "SELECT value FROM role_baselines WHERE sector='private_school' "
+                        "AND role='researcher' AND feature=?",
                         (feature,),
                     ).fetchone()[0]
                 self.assertEqual(value, 0)
 
     def test_soft_warning_is_returned_and_does_not_block_save(self):
-        self.set_sector("sme_startup")
+        self.set_sector("private_school")
         generate()
         client = self.admin_client()
         response = client.put(
             "/api/baseline-setup",
             json={"complete": False, "values": [{
-                "role": "finance", "feature": "data_transferred_mb", "value": 0,
+                "role": "researcher", "feature": "data_transferred_mb", "value": 0,
             }]},
         )
         self.assertEqual(response.status_code, 200)
         item = next(
             item for item in client.get("/api/baseline-setup").get_json()["items"]
-            if item["role"] == "finance" and item["feature"] == "data_transferred_mb"
+            if item["role"] == "researcher" and item["feature"] == "data_transferred_mb"
         )
         self.assertIn("less than one-fifth", item["warning"])
 
@@ -479,7 +489,7 @@ class RoleBaselineApiTest(unittest.TestCase):
 
         selected = next(
             entry for entry in values
-            if entry["role"] == "finance" and entry["feature"] == "files_accessed"
+            if entry["role"] == "researcher" and entry["feature"] == "files_accessed"
         )
         updated = [
             {**entry, "value": entry["value"] + 2}
@@ -499,8 +509,8 @@ class RoleBaselineApiTest(unittest.TestCase):
         self.assertIn("BASELINE_SETUP_COMPLETED", actions)
         self.assertIn("BASELINE_UPDATED", actions)
         updated_detail = next(row[1] for row in audit if row[0] == "BASELINE_UPDATED")
-        for expected in ("role=finance", "feature=files_accessed", "admin=baseline-admin",
-                         "sector=sme_startup", "old=", "new="):
+        for expected in ("role=researcher", "feature=files_accessed", "admin=baseline-admin",
+                         "sector=private_school", "old=", "new="):
             self.assertIn(expected, updated_detail)
 
         reset = client.post("/api/baseline-setup/reset")

@@ -544,7 +544,6 @@ td{padding:10px 14px;font-size:12px}
           <label>Organizational Sector</label>
           <select id="set-sector">
             <option value="private_school">Private School</option>
-            <option value="sme_startup">SME &amp; Startup</option>
             <option value="uav_disaster_response">UAV Disaster Response</option>
           </select>
           <span class="taxonomy-hint" id="set-sector-taxonomy"></span>
@@ -926,8 +925,6 @@ async function loadIntegrations() {
 const SECTOR_TAXONOMY = {
   private_school: { roles: ['researcher', 'intern', 'admin_staff', 'it_staff'],
                      data_categories: ['projects', 'private_documents', 'intellectual_property', 'pii'] },
-  sme_startup: { roles: ['finance', 'hr', 'it_admin'],
-                 data_categories: ['financial_transactions', 'client_data', 'employee_records'] },
   uav_disaster_response: { roles: ['drone_operator'],
                             data_categories: ['drone_platform_access', 'disaster_data'] },
 };

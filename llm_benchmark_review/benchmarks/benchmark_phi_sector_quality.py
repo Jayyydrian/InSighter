@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import requests
 
-SECTORS = ("private_school", "sme_startup")
+SECTORS = ("private_school", "uav_disaster_response")
 DEFAULT_ALERTS_PER_SECTOR = 10
 DEFAULT_OUTPUT_PATH = (
     Path(__file__).resolve().parent.parent

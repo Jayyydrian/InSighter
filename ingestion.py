@@ -42,7 +42,7 @@ def ensure_logs_schema():
                         "UPDATE logs SET ingested_at = CURRENT_TIMESTAMP WHERE ingested_at IS NULL"
                     )
                 if name == "data_category":
-                    sector = get_active_sector(conn) or "sme_startup"
+                    sector = get_active_sector(conn) or DEFAULT_SECTOR
                     category = get_sector_config(sector)["data_categories"][0]
                     conn.execute(
                         "UPDATE logs SET data_category = ? WHERE data_category IS NULL OR data_category = ''",

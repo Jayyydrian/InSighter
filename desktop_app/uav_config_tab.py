@@ -65,7 +65,6 @@ class UavConfigTab(QWidget):
         self.sector = QComboBox()
         self.sector_options = [
             ("private_school", "Private School"),
-            ("sme_startup", "SME & Startup"),
             ("uav_disaster_response", "UAV Disaster Response"),
         ]
         for value, label in self.sector_options:
@@ -238,8 +237,8 @@ class UavConfigTab(QWidget):
     def _apply_config(self, cfg):
         self._refreshing = True
         try:
-            index = self.sector.findData(cfg.get("sector", "sme_startup"))
-            self.sector.setCurrentIndex(index if index >= 0 else 1)
+            index = self.sector.findData(cfg.get("sector", "private_school"))
+            self.sector.setCurrentIndex(index if index >= 0 else 0)
             self._set_taxonomy(cfg.get("taxonomy", {}))
             self.threshold_high.setValue(cfg["threshold_high"])
             self.threshold_medium.setValue(cfg["threshold_medium"])
@@ -321,12 +320,10 @@ class UavConfigTab(QWidget):
         labels = dict(self.sector_options)
         mappings = {
             "private_school": ["researcher", "intern", "admin_staff", "it_staff"],
-            "sme_startup": ["finance", "hr", "it_admin"],
             "uav_disaster_response": ["drone_platform_access", "disaster_data"],
         }
         roles = {
             "private_school": ["researcher", "intern", "admin_staff", "it_staff"],
-            "sme_startup": ["finance", "hr", "it_admin"],
             "uav_disaster_response": ["drone_operator"],
         }
         self._set_taxonomy({"roles": roles.get(sector, []), "data_categories": mappings.get(sector, [])})

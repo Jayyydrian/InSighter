@@ -21,7 +21,7 @@ from desktop_app.api_client import ApiClient
 SAMPLE_ALERT = {
     "id": 42,
     "user": "alice",
-    "role": "finance",
+    "role": "researcher",
     "severity": "MEDIUM",
     "flagged_by": "Isolation Forest",
     "description": "Unusual file activity detected.",
