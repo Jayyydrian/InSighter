@@ -93,6 +93,7 @@ class ApiClientTransportTest(unittest.TestCase):
 
         def make_response(method, url, **_kwargs):
             response.status_code = 302 if url.endswith("/login") else 200
+            response.json.return_value = {"csrf_token": "test-csrf", "role": "admin"}
             return response
 
         with patch.dict(os.environ, {
@@ -125,7 +126,7 @@ class ApiClientTransportTest(unittest.TestCase):
             client.logout()
 
         self.assertEqual(request_spy.call_count, session_spy.call_count)
-        self.assertEqual(session_spy.call_count, 22)
+        self.assertEqual(session_spy.call_count, 25)
         for call in session_spy.call_args_list:
             expected = (2.0, 60.0) if call.args[1].endswith(
                 "/api/alerts/1/explain"
@@ -164,6 +165,7 @@ class ApiClientTransportTest(unittest.TestCase):
         expiries = []
         monitor.session_expired.connect(lambda: expiries.append(True))
         with patch.object(client.session, "request") as request:
+            client._csrf_token = "test-csrf"
             request.return_value = self.response(
                 302, location="/login?next=/api/alerts/3/explain"
             )
@@ -209,7 +211,9 @@ class ApiClientTransportTest(unittest.TestCase):
         client = ApiClient()
         with patch.object(client.session, "request") as request:
             request.side_effect = [
+                self.response(200, json_value={"csrf_token": "test-csrf"}),
                 self.response(302, location="/"),
+                self.response(200, json_value={"csrf_token": "test-csrf"}),
                 self.response(200, json_value={"role": "admin"}),
             ]
             self.assertTrue(client.login("admin", "secret"))
@@ -217,9 +221,12 @@ class ApiClientTransportTest(unittest.TestCase):
 
         client = ApiClient()
         with patch.object(client.session, "request") as request:
-            request.return_value = self.response(
+            request.side_effect = [
+                self.response(200, json_value={"csrf_token": "test-csrf"}),
+                self.response(
                 401, text='<div class="error">Invalid username or password.</div>'
-            )
+                ),
+            ]
             with self.assertRaises(ApiError) as raised:
                 client.login("admin", "bad")
         self.assertEqual(raised.exception.status_code, 401)
@@ -246,6 +253,7 @@ class ApiClientTransportTest(unittest.TestCase):
         client = ApiClient()
         client.username = "admin"
         client.role = "admin"
+        client._csrf_token = "test-csrf"
         with patch.object(client.session, "request") as request:
             request.return_value = self.response(302, location="/login")
             client.logout()

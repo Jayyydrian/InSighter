@@ -10,10 +10,10 @@ from cryptography.fernet import Fernet
 
 
 def _secret():
-    return os.environ.get(
-        "INSIGHTER_PII_SECRET",
-        os.environ.get("INSIGHTER_SECRET_KEY", "insighter-local-development-secret"),
-    ).encode("utf-8")
+    secret = os.environ.get("INSIGHTER_PII_SECRET") or os.environ.get("INSIGHTER_SECRET_KEY")
+    if not secret:
+        raise RuntimeError("Set INSIGHTER_PII_SECRET or INSIGHTER_SECRET_KEY")
+    return secret.encode("utf-8")
 
 
 def hash_identifier(value):
