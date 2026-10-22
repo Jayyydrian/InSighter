@@ -21,10 +21,10 @@ LEGACY_DB_PATH = os.environ.get("INSIGHTER_LEGACY_DB_PATH", "database.db")
 
 
 def _database_key():
-    return os.environ.get(
-        "INSIGHTER_DB_KEY",
-        os.environ.get("INSIGHTER_SECRET_KEY", "insighter-local-development-db-key"),
-    )
+    key = os.environ.get("INSIGHTER_DB_KEY") or os.environ.get("INSIGHTER_SECRET_KEY")
+    if SQLCIPHER_AVAILABLE and not key:
+        raise RuntimeError("Set INSIGHTER_DB_KEY when SQLCipher is installed")
+    return key or ""
 
 
 def _quote_key(value):

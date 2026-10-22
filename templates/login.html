@@ -49,6 +49,7 @@ button:hover{background:#2563eb}
     <div class="subtitle">Insider Threat Monitoring · Sign in to continue</div>
 
     <form method="POST" action="{{ url_for('login') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"/>
       <label>Username</label>
       <input type="text" name="username" autocomplete="username" required autofocus/>
 
@@ -62,11 +63,6 @@ button:hover{background:#2563eb}
     <div class="error">{{ error }}</div>
     {% endif %}
 
-    <div class="hint">
-      <b>Demo accounts:</b><br/>
-      admin / admin123 &nbsp;(full access)<br/>
-      manager / manager123 &nbsp;(summary-only)
-    </div>
   </div>
 </body>
 </html>

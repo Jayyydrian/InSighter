@@ -179,6 +179,7 @@ def _start_backend_process():
 
     env = os.environ.copy()
     env["INSIGHTER_PORT"] = str(PORT)
+    env["INSIGHTER_COOKIE_SECURE"] = "0"
     env["PYTHONIOENCODING"] = "utf-8"
     os.environ["INSIGHTER_PORT"] = str(PORT)
 

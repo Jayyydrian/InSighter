@@ -77,14 +77,34 @@ python desktop_app/main.py
 ```
 
 `requirements.txt` installs the backend dependencies; `requirements-desktop.txt` adds
-PyQt6 for the desktop client. The launcher automatically starts the Flask backend in the
-background (port 5051) and opens the login window. Log in with:
+PyQt6 for the desktop client. Before the first start, provision the initial administrator
+through `INSIGHTER_ADMIN_USERNAME` and `INSIGHTER_ADMIN_PASSWORD`. The password must be
+at least 14 characters. The credentials are consumed only when no active administrator
+exists; later starts do not reset an existing account. Supply `INSIGHTER_SECRET_KEY` and
+`INSIGHTER_PII_SECRET` from a secret manager, and set `INSIGHTER_COOKIE_SECURE=1` when
+serving over HTTPS. The desktop launcher uses `INSIGHTER_COOKIE_SECURE=0` only for its
+loopback HTTP backend; do not expose that backend to a network.
 
-| Username | Password    | Role         | Access                          |
-|----------|-------------|--------------|----------------------------------|
-| admin    | admin123    | admin        | Full: dashboard, profiles, alerts, UAV config |
-| manager  | manager123  | management   | Summary counts only              |
-| hr_officer | hr_officer123 | compliance | Flagged records and audit trail with pseudonymous identities |
+The backend uses SQLite-backed opaque sessions with idle and absolute expiry. For a
+multi-instance deployment, place the database on storage with reliable SQLite locking or
+move session storage and login throttling to a shared Redis/database service before
+horizontal scaling. Enable SQLCipher and provide `INSIGHTER_DB_KEY` where database-at-rest
+encryption is required.
+
+Production environment checklist:
+
+- Set `INSIGHTER_SECRET_KEY` to a stable, high-entropy secret from a secret manager.
+- Set `INSIGHTER_PII_SECRET` to independent high-entropy key material.
+- On first provisioning only, set `INSIGHTER_ADMIN_USERNAME` and
+  `INSIGHTER_ADMIN_PASSWORD` (minimum 14 characters); remove these variables after
+  the first successful bootstrap.
+- Set `INSIGHTER_COOKIE_SECURE=1` and terminate TLS at a trusted HTTPS endpoint.
+- Provide `INSIGHTER_DB_KEY` when using SQLCipher. Protect SQLite database files and
+  backups with restrictive filesystem permissions and encrypted storage.
+- Use one shared, durable database for sessions and throttle state. SQLite is intended
+  for a single backend process; use a shared transactional store before scaling out.
+- Rotate signing, PII, and database keys under a documented rotation procedure; do not
+  log their values or place them in source control.
 
 ### Local AI Analysis
 

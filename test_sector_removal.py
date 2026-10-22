@@ -14,7 +14,7 @@ from auth import init_users_table
 from desktop_app.uav_config_tab import UavConfigTab
 from generate_logs import generate
 from sector_config import DEFAULT_SECTOR, SECTORS, get_sector_config
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 isolate_database()
 
@@ -53,10 +53,19 @@ class SectorRemovalTest(unittest.TestCase):
             os.remove(self.database_path)
 
     def admin_client(self):
+        init_users_table()
         client = app.test_client()
-        with client.session_transaction() as session:
-            session["username"] = "sector-admin"
-            session["role"] = "admin"
+        password = "sector-admin-test-password"
+        create_test_user("sector-admin", password, "admin")
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        client.post("/login", data={
+            "username": "sector-admin", "password": password, "_csrf_token": csrf,
+        })
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        original_post = client.post
+        client.post = lambda *args, **kwargs: original_post(
+            *args, headers={**kwargs.pop("headers", {}), "X-CSRF-Token": csrf}, **kwargs
+        )
         return client
 
     def test_default_sector_and_supported_taxonomy(self):
