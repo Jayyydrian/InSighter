@@ -68,9 +68,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self._build_ui()
         if hasattr(self, "uav_tab"):
-            self.uav_tab.configuration_saved.connect(
-                self.dashboard_tab.refresh_thresholds
-            )
+            self.uav_tab.configuration_saved.connect(self.dashboard_tab.refresh)
         if hasattr(self, "baseline_setup_tab"):
             self.baseline_setup_tab.configuration_changed.connect(
                 self._update_baseline_banner
