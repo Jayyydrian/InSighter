@@ -13,6 +13,7 @@ from role_baseline import (
     get_effective_role_baselines,
 )
 from database import connect
+from risk_thresholds import get_thresholds, risk_level_for
 from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster
 from simulation import activity_values
 
@@ -147,8 +148,9 @@ def score_users():
     summary["risk_score"]  = summary["risk_score"].round(1)
     summary["if_score"]    = summary["if_score"].round(1)
     summary["ocsvm_score"] = summary["ocsvm_score"].round(1)
+    threshold_high, threshold_medium = get_thresholds()
     summary["risk_level"] = summary["risk_score"].apply(
-        lambda x: "HIGH" if x >= 45 else ("MEDIUM" if x >= 30 else "LOW")
+        lambda score: risk_level_for(score, threshold_high, threshold_medium)
     )
     summary["avg_files"]         = summary["avg_files"].round(1)
     summary["avg_transfer"]      = summary["avg_transfer"].round(1)

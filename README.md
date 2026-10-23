@@ -58,6 +58,20 @@ SME/startup data; they do not indicate a currently supported sector.
 
 ## Admin role baseline setup
 
+User risk levels (LOW / MEDIUM / HIGH) use the administrator-configured
+`threshold_medium` and `threshold_high` values as the source of truth. New
+databases default to MEDIUM at 30 and HIGH at 45. If stored thresholds are
+missing or invalid, scoring uses those defaults and emits a rate-limited warning.
+Alert event severity (MEDIUM / HIGH / CRITICAL) is separate and continues to use
+the event-level transfer and file cutoffs; changing user risk thresholds does not
+change alert severity.
+
+The checked-in risk-score golden snapshot was generated from base commit
+`de94a6c0c3b6d72d9e4c5a1334a61e274edd16ec`. To intentionally regenerate it from
+a chosen checkout, run
+`python scripts/regenerate_risk_score_golden.py --repo <checkout> --source-commit <commit> --output tests/data/risk_score_golden.json`.
+This command is manual only and is not part of tests or CI.
+
 The admin-only first-run setup lets an administrator declare a center of normal for each role and feature. A sector is either **not configured** (built-in learned defaults are used) or **configured**. Values and setup status are stored per sector and survive log reseeding.
 
 A declared value replaces the learned per-role mean only in the role-deviation signal. Per feature, deviation is `abs(actual - declared) / declared`; when the declared value is 0, a positive actual contributes a ratio of 1. The resulting signal is one component of the final score with weight 0.1, so it can contribute at most 10 of 100 points. IsolationForest and One-Class SVM do not use declared values; their inputs, fitting, calibration, and risk thresholds are unchanged.

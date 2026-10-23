@@ -26,6 +26,7 @@ from database import Row, connect, ensure_database
 from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector_config, monitoring_scope as calculate_monitoring_scope
+from risk_thresholds import get_thresholds, validate_thresholds
 
 logger = logging.getLogger(__name__)
 
@@ -599,6 +600,7 @@ def _deployment_config_payload():
     keys = ["sector", "threshold_high", "threshold_medium", "log_targets",
             "sync_interval_minutes", "drone_operator_username", "updated_at"]
     payload = dict(zip(keys, row))
+    payload["threshold_high"], payload["threshold_medium"] = get_thresholds()
     payload["taxonomy"] = get_sector_config(payload["sector"])
     return payload
 
@@ -621,14 +623,29 @@ def update_uav_config():
         sector = data.get("sector")
         if sector is None:
             sector = get_active_sector() or DEFAULT_SECTOR
-        elif sector not in SECTORS:
+        elif not isinstance(sector, str) or sector not in SECTORS:
             supported = ", ".join(sorted(SECTORS))
             return jsonify({
                 "error": f"Unsupported deployment sector '{sector}'. Supported sectors: {supported}."
             }), 400
     else:
         sector = get_active_sector() or DEFAULT_SECTOR
+
+    if "threshold_high" not in data or "threshold_medium" not in data:
+        return jsonify({
+            "error": "threshold_high and threshold_medium are required."
+        }), 400
+    try:
+        threshold_high, threshold_medium = validate_thresholds(
+            data["threshold_high"], data["threshold_medium"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     conn = connect()
+    old_threshold_high, old_threshold_medium = conn.execute(
+        "SELECT threshold_high, threshold_medium FROM deployment_config WHERE id = 1"
+    ).fetchone()
     conn.execute("""
         UPDATE deployment_config SET
             sector = ?,
@@ -641,17 +658,24 @@ def update_uav_config():
         WHERE id = 1
     """, (
         sector,
-        data.get("threshold_high", 45),
-        data.get("threshold_medium", 30),
+        threshold_high,
+        threshold_medium,
         data.get("log_targets", ""),
         data.get("sync_interval_minutes", 15),
         data.get("drone_operator_username", "drone_operator"),
     ))
+    conn.execute(
+        "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+        (
+            session.get("username"),
+            "CONFIG_UPDATED",
+            f"sector={sector}, threshold_high={old_threshold_high}->{threshold_high}, "
+            f"threshold_medium={old_threshold_medium}->{threshold_medium}, "
+            f"sync_interval_minutes={data.get('sync_interval_minutes', 15)}",
+        ),
+    )
     conn.commit()
     conn.close()
-    log_action(session.get("username"), "CONFIG_UPDATED",
-               f"sector={sector}, thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
-               f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
 
 

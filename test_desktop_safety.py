@@ -11,7 +11,8 @@ from desktop_app.api_client import ApiError
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app import connection_state
 from desktop_app.connection_state import CONNECTED, OFFLINE, ConnectionMonitor
-from desktop_app.dashboard_tab import DashboardTab, risk_level_for, score_color
+from desktop_app.dashboard_tab import DashboardTab, risk_level_for
+from desktop_app.risk import risk_color_for_level
 from desktop_app.safe_text import plain_label
 from desktop_app import server_launcher
 
@@ -70,17 +71,16 @@ class DesktopSafetyTest(unittest.TestCase):
         self.assertEqual(monitor.state, CONNECTED)
         self.assertEqual(states, [OFFLINE, CONNECTED])
 
-    def test_dashboard_risk_colors_follow_configured_thresholds(self):
-        self.assertEqual(risk_level_for(70, 65, 40), "HIGH")
-        self.assertEqual(risk_level_for(40, 65, 40), "MEDIUM")
-        self.assertEqual(risk_level_for(39, 65, 40), "LOW")
-        self.assertEqual(score_color(65, 65, 40), "#ef4444")
-        self.assertEqual(score_color(40, 65, 40), "#f59e0b")
-        self.assertEqual(score_color(39, 65, 40), "#10b981")
+    def test_dashboard_risk_colors_follow_server_levels(self):
+        self.assertEqual(risk_level_for(50, 50, 40), "HIGH")
+        self.assertEqual(risk_level_for(40, 50, 40), "MEDIUM")
+        self.assertEqual(risk_level_for(39.9, 50, 40), "LOW")
+        self.assertEqual(risk_color_for_level("HIGH"), "#ef4444")
+        self.assertEqual(risk_color_for_level("MEDIUM"), "#f59e0b")
+        self.assertEqual(risk_color_for_level("LOW"), "#10b981")
 
     def test_dashboard_counts_and_badges_keep_server_risk_level(self):
         tab = DashboardTab(object())
-        tab.set_thresholds(70, 55)
         tab._refresh_scores([{
             "user": "operator",
             "role": "drone_operator",
@@ -101,7 +101,62 @@ class DesktopSafetyTest(unittest.TestCase):
         badge_widget = tab.table.cellWidget(0, 4)
         self.assertEqual(badge_widget.findChild(QLabel).text(), "HIGH")
         score_widget = tab.table.cellWidget(0, 3)
-        self.assertIn("#f59e0b", score_widget.findChildren(QLabel)[0].styleSheet())
+        self.assertIn("#ef4444", score_widget.findChildren(QLabel)[0].styleSheet())
+
+    def test_dashboard_badges_and_score_visuals_match_server_levels_at_50_40(self):
+        users = []
+        for index, (score, level) in enumerate((
+            (39.9, "LOW"),
+            (40.0, "MEDIUM"),
+            (49.9, "MEDIUM"),
+            (50.0, "HIGH"),
+        )):
+            users.append({
+                "user": f"operator_{index}",
+                "role": "drone_operator",
+                "risk_score": score,
+                "risk_level": level,
+                "if_score": score,
+                "ocsvm_score": score,
+                "avg_files": 10,
+                "avg_transfer": 2,
+                "off_hours": 0,
+                "total_logs": 10,
+                "anomalous_logs": 2,
+            })
+
+        class FakeClient:
+            config = {"threshold_high": 50, "threshold_medium": 40}
+
+            def get_scores(self):
+                return users
+
+        client = FakeClient()
+        tab = DashboardTab(client)
+        tab._refresh_scores(client.get_scores())
+
+        self.assertEqual(tab.card_high.value_label.text(), "1")
+        self.assertEqual(tab.card_medium.value_label.text(), "2")
+        self.assertEqual(tab.card_low.value_label.text(), "1")
+        for row, (user, expected_color) in enumerate(zip(
+            users,
+            ("#10b981", "#f59e0b", "#f59e0b", "#ef4444"),
+        )):
+            self.assertEqual(
+                tab.table.cellWidget(row, 4).findChild(QLabel).text(),
+                user["risk_level"],
+            )
+            score_widget = tab.table.cellWidget(row, 3)
+            self.assertIn(
+                expected_color,
+                score_widget.findChildren(QLabel)[0].styleSheet(),
+            )
+            bars_layout, sparkline_value = tab._sparkline_rows[user["user"]]
+            self.assertIn(
+                expected_color,
+                bars_layout.itemAt(0).widget().styleSheet(),
+            )
+            self.assertIn(expected_color, sparkline_value.styleSheet())
 
     def test_connection_failure_logs_first_and_each_sixty_seconds_then_recovery(self):
         monitor = ConnectionMonitor()
