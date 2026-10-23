@@ -604,10 +604,11 @@ setInterval(() => {
 }, 1000);
 
 // Score color
-function scoreColor(pct) {
-  if (pct >= 40) return 'var(--red)';
-  if (pct >= 15) return 'var(--yellow)';
-  return 'var(--green)';
+function scoreColor(level) {
+  if (level === 'HIGH') return 'var(--red)';
+  if (level === 'MEDIUM') return 'var(--yellow)';
+  if (level === 'LOW') return 'var(--green)';
+  return 'var(--muted)';
 }
 function gaugeColor(val) {
   if (val >= 80) return 'var(--red)';
@@ -645,7 +646,7 @@ async function loadScores() {
   // Record history
   data.forEach(u => {
     if (!riskHistory[u.user]) riskHistory[u.user] = [];
-    riskHistory[u.user].push(u.risk_score);
+    riskHistory[u.user].push({ score: u.risk_score, level: u.risk_level });
     if (riskHistory[u.user].length > 20) riskHistory[u.user].shift();
   });
 
@@ -666,12 +667,12 @@ async function loadScores() {
           <div><div class="u-name">${u.user}</div><div class="u-role">${(u.role||'').replace(/_/g,' ')}</div></div>
         </div>
       </td>
-      <td class="mono-sm" style="color:${scoreColor(u.if_score)}" title="Isolation Forest component score">${u.if_score}</td>
-      <td class="mono-sm" style="color:${scoreColor(u.ocsvm_score)}" title="One-Class SVM component score">${u.ocsvm_score}</td>
+      <td class="mono-sm" style="color:${scoreColor(u.risk_level)}" title="Isolation Forest component score">${u.if_score}</td>
+      <td class="mono-sm" style="color:${scoreColor(u.risk_level)}" title="One-Class SVM component score">${u.ocsvm_score}</td>
       <td>
         <div class="score-cell" title="Blended: 0.6 × IF + 0.4 × OC-SVM">
-          <div class="score-track"><div class="score-fill" style="width:${u.risk_score}%;background:${scoreColor(u.risk_score)}"></div></div>
-          <span class="score-num" style="color:${scoreColor(u.risk_score)}">${u.risk_score}%</span>
+          <div class="score-track"><div class="score-fill" style="width:${u.risk_score}%;background:${scoreColor(u.risk_level)}"></div></div>
+          <span class="score-num" style="color:${scoreColor(u.risk_level)}">${u.risk_score}%</span>
         </div>
       </td>
       <td><span class="badge ${u.risk_level}">${u.risk_level}</span></td>
@@ -761,16 +762,16 @@ function updateSparklines(data) {
   const wrap = document.getElementById('sparklines');
   if (!data || data.length === 0) return;
   wrap.innerHTML = data.map(u => {
-    const hist = riskHistory[u.user] || [u.risk_score];
-    const max  = Math.max(...hist, 1);
-    const bars = hist.map(v => {
-      const h = Math.round((v / max) * 30) + 2;
-      return `<div class="sp-bar" style="height:${h}px;background:${scoreColor(v)}"></div>`;
+    const hist = riskHistory[u.user] || [{ score: u.risk_score, level: u.risk_level }];
+    const max  = Math.max(...hist.map(entry => entry.score), 1);
+    const bars = hist.map(entry => {
+      const h = Math.round((entry.score / max) * 30) + 2;
+      return `<div class="sp-bar" style="height:${h}px;background:${scoreColor(entry.level)}"></div>`;
     }).join('');
     return `<div class="sparkline-row">
       <div class="sp-label">${u.user}</div>
       <div class="sp-bars">${bars}</div>
-      <div class="sp-val" style="color:${scoreColor(u.risk_score)}">${u.risk_score}%</div>
+      <div class="sp-val" style="color:${scoreColor(u.risk_level)}">${u.risk_score}%</div>
     </div>`;
   }).join('');
 }

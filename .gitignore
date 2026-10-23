@@ -221,5 +221,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+database.db
+database.db-wal
+database.db-shm
 database.db-journal
 *.db-journal

@@ -35,7 +35,7 @@ class ComplianceRbacTest(unittest.TestCase):
             )
             conn.commit()
         cls.original_alerts = app.get_recent_alerts
-        app.get_recent_alerts = lambda: [{
+        app.get_recent_alerts = lambda **kwargs: [{
             "user": "alice",
             "login_hour": 23,
             "files_accessed": 10,

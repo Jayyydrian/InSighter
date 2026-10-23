@@ -5,8 +5,6 @@ sparklines, and Runtime Resources panel.
 """
 
 import logging
-import math
-import time
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
@@ -18,7 +16,9 @@ from PyQt6 import sip
 import zlib
 
 from desktop_app.async_utils import run_async
+from desktop_app.risk import risk_color_for_level
 from desktop_app.safe_text import plain_label
+from risk_thresholds import risk_level_for
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ SURFACE = "#111827"
 TEXT = "#e2e8f0"
 CRITICAL = "#dc2626"
 
-RISK_COLORS = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#10b981"}
 SEVERITY_COLORS = {"CRITICAL": CRITICAL, "HIGH": RED, "MEDIUM": YELLOW}
 
 # Users and roles are whatever the active sector/roster returns from the API
@@ -43,24 +42,11 @@ SEVERITY_COLORS = {"CRITICAL": CRITICAL, "HIGH": RED, "MEDIUM": YELLOW}
 AVATAR_PALETTE = ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#ef4444", "#f59e0b", "#ec4899", "#14b8a6"]
 
 HISTORY_MAX = 20
-DEFAULT_THRESHOLDS = (45.0, 30.0)
 
 
 def avatar_color(username):
     # Stable across process restarts (unlike builtin hash(), which is salted).
     return AVATAR_PALETTE[zlib.crc32(username.encode()) % len(AVATAR_PALETTE)]
-
-
-def risk_level_for(score, threshold_high, threshold_medium):
-    if score >= threshold_high:
-        return "HIGH"
-    if score >= threshold_medium:
-        return "MEDIUM"
-    return "LOW"
-
-
-def score_color(pct, threshold_high=45, threshold_medium=30):
-    return RISK_COLORS[risk_level_for(pct, threshold_high, threshold_medium)]
 
 
 def gauge_color(val):
@@ -117,8 +103,6 @@ class DashboardTab(QWidget):
         self.client = client
         self.history = {}
         self.last_users = []
-        self.threshold_high, self.threshold_medium = DEFAULT_THRESHOLDS
-        self._thresholds_fetched_at = 0.0
         self._sparkline_rows = {}
         self._sparkline_widgets = {}
         self._ai_results = {}
@@ -286,17 +270,13 @@ class DashboardTab(QWidget):
 
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
-        fetch_thresholds = time.monotonic() - self._thresholds_fetched_at >= 30
-
         def fetch():
-            results = {}
             requests = [
                 ("scores", self.client.get_scores),
                 ("alerts", self.client.get_alerts),
                 ("resources", self.client.get_resources),
             ]
-            if fetch_thresholds:
-                requests.append(("thresholds", self.client.get_uav_config))
+            results = {}
             for name, method in requests:
                 try:
                     results[name] = method()
@@ -313,14 +293,6 @@ class DashboardTab(QWidget):
             report_success=False,
         )
 
-    def refresh_thresholds(self):
-        run_async(
-            self.client.get_uav_config,
-            self._apply_thresholds,
-            parent=self,
-            key="thresholds",
-        )
-
     def _apply_refresh(self, results):
         for name, method in (
             ("scores", self._refresh_scores),
@@ -331,10 +303,6 @@ class DashboardTab(QWidget):
             if isinstance(result, Exception):
                 continue
             method(result)
-        if "thresholds" in results:
-            config = results["thresholds"]
-            if not isinstance(config, Exception):
-                self._apply_thresholds(config)
         monitor = getattr(self.client, "connection_monitor", None)
         failures = [value for value in results.values() if isinstance(value, Exception)]
         if monitor is not None:
@@ -345,49 +313,6 @@ class DashboardTab(QWidget):
         else:
             for failure in failures:
                 logger.warning("Failed to refresh dashboard: %s", failure)
-
-    def _apply_thresholds(self, config):
-        try:
-            high = float(config["threshold_high"])
-            medium = float(config["threshold_medium"])
-            if not (
-                math.isfinite(high)
-                and math.isfinite(medium)
-                and 0 <= medium < high <= 100
-            ):
-                raise ValueError("invalid threshold range")
-        except (KeyError, TypeError, ValueError):
-            logger.warning("Ignoring invalid dashboard risk thresholds.")
-            return
-        self.threshold_high = high
-        self.threshold_medium = medium
-        self._thresholds_fetched_at = time.monotonic()
-        self._refresh_score_colors()
-
-    def set_thresholds(self, high, medium):
-        self._apply_thresholds({
-            "threshold_high": high,
-            "threshold_medium": medium,
-        })
-
-    def _refresh_score_colors(self):
-        for row, user in enumerate(self.last_users):
-            level = risk_level_for(
-                user["risk_score"], self.threshold_high, self.threshold_medium
-            )
-            self.table.setCellWidget(row, 3, self._score_bar_cell(user["risk_score"]))
-            self.table.setCellWidget(row, 4, self._badge_cell(level))
-        if self.last_users:
-            top_color = score_color(
-                self.last_users[0]["risk_score"],
-                self.threshold_high,
-                self.threshold_medium,
-            )
-            self.card_top.value_label.setStyleSheet(
-                f"color:{top_color}; font-size:26px; font-weight:700; "
-                "font-family:Consolas,monospace; border:none;"
-            )
-        self._update_sparklines()
 
     def _refresh_runtime_status(self, resources):
         self.alert_meta.setText(
@@ -425,7 +350,7 @@ class DashboardTab(QWidget):
         self.card_low.value_label.setText(str(counts["LOW"]))
         self.card_top.value_label.setText(f"{top['risk_score']}%" if top else "-")
         top_color = (
-            score_color(top["risk_score"], self.threshold_high, self.threshold_medium)
+            risk_color_for_level(top["risk_level"])
             if top else ACCENT
         )
         self.card_top.value_label.setStyleSheet(
@@ -446,7 +371,9 @@ class DashboardTab(QWidget):
                 item.setForeground(QColor(MUTED2))
                 self.table.setItem(row, col, item)
 
-            self.table.setCellWidget(row, 3, self._score_bar_cell(u["risk_score"]))
+            self.table.setCellWidget(
+                row, 3, self._score_bar_cell(u["risk_score"], u["risk_level"])
+            )
             self.table.setCellWidget(row, 4, self._badge_cell(u["risk_level"]))
 
             for col, key in ((5, "avg_files"), (6, "avg_transfer"), (7, "off_hours")):
@@ -460,7 +387,7 @@ class DashboardTab(QWidget):
 
         for u in users:
             hist = self.history.setdefault(u["user"], [])
-            hist.append(u["risk_score"])
+            hist.append((u["risk_score"], u["risk_level"]))
             if len(hist) > HISTORY_MAX:
                 del hist[0]
         self._update_sparklines()
@@ -495,14 +422,14 @@ class DashboardTab(QWidget):
         h.addStretch()
         return w
 
-    def _score_bar_cell(self, score):
+    def _score_bar_cell(self, score, risk_level):
         w = QWidget()
         w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
         h.setSpacing(8)
 
-        color = score_color(score, self.threshold_high, self.threshold_medium)
+        color = risk_color_for_level(risk_level)
         track = QFrame()
         track.setFixedSize(70, 4)
         track.setStyleSheet(f"background:{BORDER2}; border-radius:2px;")
@@ -529,7 +456,7 @@ class DashboardTab(QWidget):
         w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
-        color = RISK_COLORS.get(level, TEXT)
+        color = risk_color_for_level(level)
         badge = plain_label(level)
         badge.setStyleSheet(
             f"color:{color}; border:1px solid {color}; border-radius:4px; "
@@ -548,25 +475,28 @@ class DashboardTab(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
 
-            max_v = max(hist + [1])
-            for v in hist:
+            entries = [
+                item if isinstance(item, tuple) else (item, None)
+                for item in hist
+            ]
+            scores = [score for score, _level in entries]
+            max_v = max(scores + [1])
+            for v, level in entries:
                 h = round((v / max_v) * 28) + 2
                 bar = QFrame()
                 bar.setFixedHeight(h)
                 bar.setMinimumWidth(3)
                 bar.setSizePolicy(bar.sizePolicy().Policy.Expanding, bar.sizePolicy().Policy.Fixed)
                 bar.setStyleSheet(
-                    f"background:{score_color(v, self.threshold_high, self.threshold_medium)}; "
+                    f"background:{risk_color_for_level(level)}; "
                     "border-radius:2px;"
                 )
                 bars_layout.addWidget(bar, alignment=Qt.AlignmentFlag.AlignBottom)
             bars_layout.addStretch()
 
-            val_label.setText(f"{hist[-1]}%" if hist else "-")
-            color = (
-                score_color(hist[-1], self.threshold_high, self.threshold_medium)
-                if hist else TEXT
-            )
+            last_score, last_level = entries[-1] if entries else ("-", None)
+            val_label.setText(f"{last_score}%" if entries else "-")
+            color = risk_color_for_level(last_level) if entries else TEXT
             val_label.setStyleSheet(
                 f"color:{color}; font-size:11px; font-family:Consolas,monospace;"
             )

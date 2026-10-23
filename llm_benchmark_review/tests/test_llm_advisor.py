@@ -758,7 +758,7 @@ class ExplainAlertRouteTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.original_alerts = app.get_recent_alerts
-        app.get_recent_alerts = lambda: [SAMPLE_ALERT]
+        app.get_recent_alerts = lambda **kwargs: [SAMPLE_ALERT]
         create_test_user("llm-root", "llm-root-test-password", "admin")
         create_test_user("llm-auditor", "llm-auditor-test-password", "compliance")
 
@@ -787,7 +787,8 @@ class ExplainAlertRouteTest(unittest.TestCase):
 
     def test_requires_admin(self):
         client = self._login("llm-auditor", "llm-auditor-test-password")
-        r = client.post("/api/alerts/42/explain")
+        r = self._post(client, "/api/alerts/42/explain")
+        self.assertEqual(r.status_code, 403)
         self.assertNotEqual(r.status_code, 200)
 
     def test_unknown_alert_id_returns_404(self):

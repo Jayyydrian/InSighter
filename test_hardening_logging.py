@@ -6,6 +6,9 @@ from unittest.mock import Mock, patch
 
 class HardeningLoggingTest(unittest.TestCase):
     def test_background_simulation_tick_failure_is_logged(self):
+        from test_support import isolate_database
+
+        isolate_database()
         import app
 
         with patch("app._run_simulation_tick", side_effect=RuntimeError("tick failed")), \

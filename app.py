@@ -28,6 +28,7 @@ from database import Row, connect, ensure_database
 from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector_config, monitoring_scope as calculate_monitoring_scope
+from risk_thresholds import get_thresholds, validate_thresholds
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +190,48 @@ def dashboard():
 def scores():
     return jsonify(score_users())
 
+
+def _alert_page_options():
+    raw_limit = request.args.get("limit", "25")
+    raw_offset = request.args.get("offset", "0")
+    sort = request.args.get("sort", "priority")
+    if not re.fullmatch(r"[0-9]+", raw_limit, flags=re.ASCII):
+        raise ValueError("limit must be an integer between 1 and 200.")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be an integer between 1 and 200.")
+    if not re.fullmatch(r"[0-9]+", raw_offset, flags=re.ASCII):
+        raise ValueError("offset must be a non-negative integer.")
+    offset = int(raw_offset)
+    if sort not in {"priority", "newest"}:
+        raise ValueError("sort must be 'priority' or 'newest'.")
+    return limit, offset, sort
+
+
+def _paginated_alert_response(compliance=False):
+    try:
+        limit, offset, sort = _alert_page_options()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    alerts = get_recent_alerts(limit=None, sort=sort)
+    total = len(alerts)
+    page = alerts[offset:offset + limit]
+    if compliance:
+        page = [
+            {**alert, "user": hash_identifier(alert["user"])}
+            for alert in page
+        ]
+    response = jsonify(page)
+    response.headers["X-Total-Flagged"] = str(total)
+    response.headers["X-Returned"] = str(len(page))
+    return response
+
+
 @app.route("/api/alerts")
 @admin_required
 def alerts():
-    return jsonify(get_recent_alerts())
+    return _paginated_alert_response()
 
 
 # In-memory cache for AI explanations, keyed by alert (log) id -- the underlying
@@ -333,7 +372,7 @@ def explain_alert_route(alert_id):
     if cached is not None:
         return jsonify(cached)
 
-    alert = next((a for a in get_recent_alerts() if a["id"] == alert_id), None)
+    alert = next((a for a in get_recent_alerts(limit=None) if a["id"] == alert_id), None)
     if alert is None:
         return jsonify({"error": "Alert not found (it may have scrolled out of the recent window)."}), 404
 
@@ -510,10 +549,7 @@ def baseline_setup_reset():
 @compliance_required
 def compliance_alerts():
     """Return flagged incidents with stable pseudonymous user identifiers."""
-    return jsonify([
-        {**alert, "user": hash_identifier(alert["user"])}
-        for alert in get_recent_alerts()
-    ])
+    return _paginated_alert_response(compliance=True)
 
 @app.route("/api/sessions")
 @admin_required
@@ -644,6 +680,7 @@ def _deployment_config_payload():
     keys = ["sector", "threshold_high", "threshold_medium", "log_targets",
             "sync_interval_minutes", "drone_operator_username", "updated_at"]
     payload = dict(zip(keys, row))
+    payload["threshold_high"], payload["threshold_medium"] = get_thresholds()
     payload["taxonomy"] = get_sector_config(payload["sector"])
     return payload
 
@@ -658,7 +695,10 @@ def get_uav_config():
 @app.route("/api/uav-config", methods=["POST"])
 @admin_required
 def update_uav_config():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
     # Only change the sector if the caller explicitly included it; otherwise
     # keep whatever is currently configured. Missing keys should not silently
     # revert the deployment to a removed sector.
@@ -666,14 +706,29 @@ def update_uav_config():
         sector = data.get("sector")
         if sector is None:
             sector = get_active_sector() or DEFAULT_SECTOR
-        elif sector not in SECTORS:
+        elif not isinstance(sector, str) or sector not in SECTORS:
             supported = ", ".join(sorted(SECTORS))
             return jsonify({
                 "error": f"Unsupported deployment sector '{sector}'. Supported sectors: {supported}."
             }), 400
     else:
         sector = get_active_sector() or DEFAULT_SECTOR
+
+    if "threshold_high" not in data or "threshold_medium" not in data:
+        return jsonify({
+            "error": "threshold_high and threshold_medium are required."
+        }), 400
+    try:
+        threshold_high, threshold_medium = validate_thresholds(
+            data["threshold_high"], data["threshold_medium"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     conn = connect()
+    old_threshold_high, old_threshold_medium = conn.execute(
+        "SELECT threshold_high, threshold_medium FROM deployment_config WHERE id = 1"
+    ).fetchone()
     conn.execute("""
         UPDATE deployment_config SET
             sector = ?,
@@ -686,17 +741,24 @@ def update_uav_config():
         WHERE id = 1
     """, (
         sector,
-        data.get("threshold_high", 45),
-        data.get("threshold_medium", 30),
+        threshold_high,
+        threshold_medium,
         data.get("log_targets", ""),
         data.get("sync_interval_minutes", 15),
         data.get("drone_operator_username", "drone_operator"),
     ))
+    conn.execute(
+        "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+        (
+            session.get("username"),
+            "CONFIG_UPDATED",
+            f"sector={sector}, threshold_high={old_threshold_high}->{threshold_high}, "
+            f"threshold_medium={old_threshold_medium}->{threshold_medium}, "
+            f"sync_interval_minutes={data.get('sync_interval_minutes', 15)}",
+        ),
+    )
     conn.commit()
     conn.close()
-    log_action(session.get("username"), "CONFIG_UPDATED",
-               f"sector={sector}, thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
-               f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
 
 
