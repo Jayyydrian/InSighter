@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 isolate_database()
 os.environ.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")
@@ -23,6 +23,30 @@ from privacy import hash_identifier
 from risk_thresholds import DEFAULT_THRESHOLDS, get_thresholds, risk_level_for
 
 
+def _login_test_user(test_case, username, password):
+    client = test_case.app.test_client()
+    csrf_token = client.get("/api/csrf-token").get_json()["csrf_token"]
+    response = client.post(
+        "/login",
+        data={
+            "username": username,
+            "password": password,
+            "_csrf_token": csrf_token,
+        },
+    )
+    test_case.assertEqual(response.status_code, 302)
+    csrf_token = client.get("/api/csrf-token").get_json()["csrf_token"]
+    return client, csrf_token
+
+
+def _post_with_csrf(client, csrf_token, path, **kwargs):
+    return client.post(
+        path,
+        headers={"X-CSRF-Token": csrf_token},
+        **kwargs,
+    )
+
+
 class RiskThresholdTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -34,10 +58,12 @@ class RiskThresholdTest(unittest.TestCase):
         database.DB_PATH = self.database_path
         database.ensure_database()
         init_users_table()
-        self.admin = self.app.test_client()
-        with self.admin.session_transaction() as session:
-            session["username"] = "threshold-admin"
-            session["role"] = "admin"
+        create_test_user(
+            "threshold-admin", "threshold-admin-test-password", "admin"
+        )
+        self.admin, self.admin_csrf_token = _login_test_user(
+            self, "threshold-admin", "threshold-admin-test-password"
+        )
 
     def tearDown(self):
         database.DB_PATH = self.previous_database_path
@@ -117,7 +143,9 @@ class RiskThresholdTest(unittest.TestCase):
                 },
             )
 
-            update = self.admin.post(
+            update = _post_with_csrf(
+                self.admin,
+                self.admin_csrf_token,
                 "/api/deployment-config",
                 json={
                     "sector": "private_school",
@@ -208,7 +236,9 @@ class RiskThresholdTest(unittest.TestCase):
 
         for payload in invalid_payloads:
             with self.subTest(payload=payload):
-                response = self.admin.post(
+                response = _post_with_csrf(
+                    self.admin,
+                    self.admin_csrf_token,
                     "/api/deployment-config",
                     data=json.dumps(payload),
                     content_type="application/json",
@@ -232,7 +262,9 @@ class RiskThresholdTest(unittest.TestCase):
                     )
 
     def test_threshold_change_audit_records_old_and_new_values(self):
-        response = self.admin.post(
+        response = _post_with_csrf(
+            self.admin,
+            self.admin_csrf_token,
             "/api/deployment-config",
             json={
                 "sector": "private_school",
@@ -262,10 +294,15 @@ class AlertPriorityTest(unittest.TestCase):
         database.DB_PATH = self.database_path
         database.ensure_database()
         init_users_table()
-        self.admin = self.app.test_client()
-        with self.admin.session_transaction() as session:
-            session["username"] = "threshold-admin"
-            session["role"] = "admin"
+        create_test_user(
+            "threshold-admin", "threshold-admin-test-password", "admin"
+        )
+        create_test_user(
+            "compliance-user", "compliance-test-password", "compliance"
+        )
+        self.admin, self.admin_csrf_token = _login_test_user(
+            self, "threshold-admin", "threshold-admin-test-password"
+        )
         with closing(database.connect()) as conn:
             conn.execute("""
                 CREATE TABLE logs (
@@ -392,10 +429,9 @@ class AlertPriorityTest(unittest.TestCase):
                     self.assertEqual(response.status_code, 400)
                     self.assertIn("error", response.get_json())
 
-            compliance = self.app.test_client()
-            with compliance.session_transaction() as session:
-                session["username"] = "compliance-user"
-                session["role"] = "compliance"
+            compliance, _ = _login_test_user(
+                self, "compliance-user", "compliance-test-password"
+            )
             response = compliance.get("/api/compliance/alerts?limit=1")
 
         self.assertEqual(response.status_code, 200)
