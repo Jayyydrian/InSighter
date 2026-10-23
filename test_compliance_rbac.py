@@ -4,7 +4,7 @@ import unittest
 from contextlib import closing
 
 import database
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 isolate_database()
 
@@ -24,6 +24,9 @@ class ComplianceRbacTest(unittest.TestCase):
         cls.previous_database_path = database.DB_PATH
         database.DB_PATH = DB_PATH
         init_users_table()
+        create_test_user("rbac-root", "root-test-password-long", "admin")
+        create_test_user("rbac-auditor", "auditor-test-password-long", "compliance")
+        create_test_user("rbac-summary", "summary-test-password-long", "management")
         generate()
         with closing(database.connect()) as conn:
             conn.execute(
@@ -56,22 +59,25 @@ class ComplianceRbacTest(unittest.TestCase):
 
     def _login(self, username, password):
         client = app.app.test_client()
+        token = client.get("/api/csrf-token").get_json()["csrf_token"]
         self.assertEqual(
-            client.post("/login", data={"username": username, "password": password}).status_code,
+            client.post("/login", data={
+                "username": username, "password": password, "_csrf_token": token,
+            }).status_code,
             302,
         )
         return client
 
     def test_admin_sees_real_identity(self):
-        client = self._login("admin", "admin123")
+        client = self._login("rbac-root", "root-test-password-long")
         self.assertEqual(client.get("/api/alerts").get_json()[0]["user"], "alice")
         self.assertTrue(any(
-            row["username"] == "admin"
+            row["username"] == "rbac-root"
             for row in client.get("/api/audit-log").get_json()
         ))
 
     def test_compliance_sees_incident_with_pseudonyms(self):
-        client = self._login("hr_officer", "hr_officer123")
+        client = self._login("rbac-auditor", "auditor-test-password-long")
         alerts = client.get("/api/compliance/alerts")
         self.assertEqual(alerts.status_code, 200)
         self.assertEqual(alerts.get_json()[0]["user"], hash_identifier("alice"))
@@ -81,16 +87,16 @@ class ComplianceRbacTest(unittest.TestCase):
         audit = client.get("/api/compliance/audit-log")
         self.assertEqual(audit.status_code, 200)
         entries = audit.get_json()
-        self.assertTrue(any(row["username"] == hash_identifier("admin") for row in entries))
+        self.assertTrue(any(row["username"] == hash_identifier("rbac-root") for row in entries))
         self.assertTrue(any(hash_identifier("alice") in row["detail"] for row in entries))
         self.assertNotIn("alice", audit.get_data(as_text=True))
-        self.assertNotIn("admin", [row["username"] for row in entries])
+        self.assertNotIn("rbac-root", [row["username"] for row in entries])
 
         self.assertEqual(client.get("/api/alerts").status_code, 403)
         self.assertEqual(client.get("/api/audit-log").status_code, 403)
 
     def test_management_remains_aggregate_only(self):
-        client = self._login("manager", "manager123")
+        client = self._login("rbac-summary", "summary-test-password-long")
         summary = client.get("/api/summary")
         self.assertEqual(summary.status_code, 200)
         self.assertEqual(set(summary.get_json()), {"HIGH", "MEDIUM", "LOW"})

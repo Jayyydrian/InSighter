@@ -11,10 +11,12 @@ from role_baseline import ROLE_BASELINE_FEATURES, build_role_baseline_features
 from auth import (
     admin_required,
     compliance_required,
+    DatabaseSessionInterface,
     init_users_table,
     login_required,
     log_action,
     authenticate_login,
+    rotate_session,
 )
 from ingestion import (
     active_directory_status,
@@ -31,8 +33,13 @@ from risk_thresholds import get_thresholds, validate_thresholds
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
+app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("Set INSIGHTER_SECRET_KEY to a stable, randomly generated secret")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("INSIGHTER_COOKIE_SECURE", "1") == "1"
+app.session_interface = DatabaseSessionInterface()
 # Lets desktop_app/server_launcher.py tell a genuinely-fresh backend process apart
 # from a stale one left running from before app.py was last edited on disk, instead
 # of silently reusing whatever already answers on the port (see /api/_backend-info).
@@ -87,31 +94,69 @@ def backend_info():
     return jsonify({"pid": os.getpid(), "app_mtime": _APP_FILE_MTIME})
 
 
+@app.before_request
+def enforce_csrf():
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    expected = session.get("csrf_token")
+    supplied = request.headers.get("X-CSRF-Token") or request.form.get("_csrf_token")
+    if not expected or not supplied or not secrets.compare_digest(expected, supplied):
+        return jsonify({"error": "CSRF validation failed."}), 400
+    return None
+
+
+@app.route("/api/csrf-token")
+def csrf_token():
+    session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return jsonify({"csrf_token": session["csrf_token"]})
+
+
 # ── Auth routes ──────────────────────────────────────────────────────────────
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if request.method == "GET":
+        session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        return render_template("login.html", error=None, csrf_token=session["csrf_token"])
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         role, retry_after = authenticate_login(username, password)
         if role:
-            session["username"] = username
-            session["role"] = role
-            log_action(username, "LOGIN_SUCCESS", f"role={role}")
+            session.clear()
+            rotate_session()
+            session["user_id"] = role["id"]
+            session["username"] = role["username"]
+            session["role"] = role["role"]
+            session["csrf_token"] = secrets.token_urlsafe(32)
+            log_action(username, "LOGIN_SUCCESS", f"role={role['role']}")
             next_url = request.args.get("next") or url_for("dashboard")
-            return redirect(next_url)
+            return redirect(_safe_local_redirect(next_url))
         if retry_after:
             log_action(username or "(blank)", "LOGIN_COOLDOWN", "too many failed attempts")
             return render_template(
-                "login.html",
-                error=f"Too many unsuccessful sign-in attempts. Try again in about {retry_after} seconds.",
-            ), 429
+                "login.html", error="Invalid username or password.",
+                csrf_token=session.get("csrf_token", ""),
+            ), 401
         log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
-        return render_template("login.html", error="Invalid username or password."), 401
-    return render_template("login.html", error=None)
+        return render_template(
+            "login.html", error="Invalid username or password.",
+            csrf_token=session.get("csrf_token", ""),
+        ), 401
+    return render_template("login.html", error=None, csrf_token=session.get("csrf_token", ""))
 
 
-@app.route("/logout")
+def _safe_local_redirect(target):
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(target or "")
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return url_for("dashboard")
+    if parsed.path.startswith("//") or "\\" in target:
+        return url_for("dashboard")
+    return target
+
+
+@app.route("/logout", methods=["POST"])
 def logout():
     if "username" in session:
         log_action(session["username"], "LOGOUT", "")
@@ -518,7 +563,7 @@ def sessions():
     conn.close()
     return jsonify([dict(r) for r in rows])
 
-@app.route("/api/reseed")
+@app.route("/api/reseed", methods=["POST"])
 @admin_required
 def reseed():
     generate()
@@ -531,7 +576,7 @@ def reseed():
     log_action(session.get("username"), "DATA_RESEEDED", "synthetic log data regenerated")
     return jsonify({"status": "reseeded"})
 
-@app.route("/api/simulate")
+@app.route("/api/simulate", methods=["POST"])
 @admin_required
 def simulate():
     simulation_event = _run_simulation_tick()

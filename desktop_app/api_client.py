@@ -30,9 +30,23 @@ class ApiClient:
         self.session = requests.Session()
         self.username = None
         self.role = None
+        self._csrf_token = None
+
+    def _refresh_csrf_token(self):
+        response = self._request("GET", "/api/csrf-token")
+        if response.status_code != 200:
+            raise ApiError(response.status_code, "Could not establish a secure backend session.")
+        self._csrf_token = self._json(response, "/api/csrf-token").get("csrf_token")
 
     def _request(self, method, path, **kwargs):
         login_request = method.upper() == "POST" and path == "/login"
+        if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            if self._csrf_token is None and path != "/login":
+                self._refresh_csrf_token()
+            headers = dict(kwargs.pop("headers", {}))
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+            kwargs["headers"] = headers
         kwargs["allow_redirects"] = False if not login_request else kwargs.get(
             "allow_redirects", False
         )
@@ -80,6 +94,7 @@ class ApiClient:
 
     # ── Auth ─────────────────────────────────────────────────────────────
     def login(self, username, password):
+        self._refresh_csrf_token()
         resp = self._request(
             "POST", "/login",
             data={"username": username, "password": password},
@@ -88,6 +103,7 @@ class ApiClient:
         if resp.status_code == 302:
             # success -> Flask redirects; fetch role via a lightweight probe
             self.username = username
+            self._refresh_csrf_token()
             probe = self._request("GET", "/api/whoami")
             self.role = self._json(probe, "/api/whoami").get("role")
             return True
@@ -101,11 +117,10 @@ class ApiClient:
         return False
 
     def logout(self):
-        response = self._request("GET", "/logout")
-        if response.status_code == 200:
-            self._json(response, "/logout")
+        self._request("POST", "/logout")
         self.username = None
         self.role = None
+        self._csrf_token = None
 
     # ── Data endpoints ───────────────────────────────────────────────────
     def get_scores(self):
@@ -185,10 +200,10 @@ class ApiClient:
         return self._json(resp, "/api/deployment-config")
 
     def reseed(self):
-        return self._get("/api/reseed")
+        return self._post("/api/reseed")
 
     def simulate(self):
-        return self._get("/api/simulate")
+        return self._post("/api/simulate")
 
     # ── Internal ─────────────────────────────────────────────────────────
     def _baseline_request(self, method, path, **kwargs):
