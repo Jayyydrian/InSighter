@@ -251,6 +251,161 @@ class RiskThresholdTest(unittest.TestCase):
         self.assertIn("threshold_medium=30.0->35.0", detail)
 
 
+class AlertPriorityTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app
+
+    def setUp(self):
+        self.previous_database_path = database.DB_PATH
+        self.database_path = temporary_database_path()
+        database.DB_PATH = self.database_path
+        database.ensure_database()
+        init_users_table()
+        self.admin = self.app.test_client()
+        with self.admin.session_transaction() as session:
+            session["username"] = "threshold-admin"
+            session["role"] = "admin"
+        with closing(database.connect()) as conn:
+            conn.execute("""
+                CREATE TABLE logs (
+                    id INTEGER PRIMARY KEY,
+                    user TEXT,
+                    login_hour INTEGER,
+                    files_accessed INTEGER,
+                    data_transferred_mb REAL,
+                    failed_logins INTEGER,
+                    off_hours_access INTEGER,
+                    role TEXT,
+                    data_category TEXT
+                )
+            """)
+            rows = []
+            for row_id in range(1, 601):
+                files = 80 if row_id == 598 else 3
+                transfer = 700 if row_id in {100, 597} else 20
+                rows.append(
+                    (row_id, f"researcher_{row_id}", 12, files, transfer, 0, 0,
+                     "researcher", "projects")
+                )
+            conn.executemany(
+                "INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+            )
+            conn.commit()
+
+    def tearDown(self):
+        database.DB_PATH = self.previous_database_path
+        if os.path.exists(self.database_path):
+            os.remove(self.database_path)
+
+    def _fake_ensemble(self, frame, **_kwargs):
+        result = frame.copy()
+        result["is_anomaly"] = result["id"].eq(100).astype(int)
+        result["ocsvm_score"] = result["id"].astype(float)
+        result["if_score"] = 0.0
+        result["role_baseline_score"] = 0.0
+        result["final_score"] = result["id"].map(
+            lambda row_id: {
+                100: 60.0,
+                597: 75.0,
+                598: 90.0,
+                599: 100.0,
+                600: 100.0,
+            }.get(row_id, float(row_id) / 10)
+        )
+        return result
+
+    def test_flagged_id_set_is_preserved_and_priority_order_is_stable(self):
+        import numpy as np
+
+        with patch.object(
+            model, "_run_ensemble", side_effect=self._fake_ensemble
+        ):
+            actual = model.get_recent_alerts(limit=None)
+
+        ids = list(range(600, 0, -1))
+        ocsvm = np.asarray(ids, dtype=float)
+        cutoff = np.percentile(ocsvm, 92)
+        expected = {
+            row_id for row_id in ids
+            if row_id == 100 or row_id >= cutoff
+        }
+        self.assertEqual({alert["id"] for alert in actual}, expected)
+
+        keys = [
+            (
+                {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}[alert["severity"]],
+                -alert["final_score"],
+                -alert["id"],
+            )
+            for alert in actual
+        ]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(actual[0]["id"], 597)
+        self.assertIn(100, [alert["id"] for alert in actual[:25]])
+        self.assertLess(100, 599)
+
+    def test_alert_paging_headers_and_newest_sort(self):
+        with patch.object(
+            model, "_run_ensemble", side_effect=self._fake_ensemble
+        ):
+            full = model.get_recent_alerts(limit=None)
+            first = self.admin.get("/api/alerts")
+            self.assertEqual(first.status_code, 200)
+            first_page = first.get_json()
+            self.assertEqual(first.headers["X-Total-Flagged"], str(len(full)))
+            self.assertEqual(first.headers["X-Returned"], str(len(first_page)))
+            self.assertEqual(len(first_page), min(25, len(full)))
+
+            paged = []
+            for offset in range(0, len(full), 17):
+                response = self.admin.get(
+                    f"/api/alerts?limit=17&offset={offset}"
+                )
+                paged.extend(response.get_json())
+            self.assertEqual(
+                [alert["id"] for alert in paged],
+                [alert["id"] for alert in full],
+            )
+            self.assertEqual(len({alert["id"] for alert in paged}), len(full))
+
+            newest = self.admin.get("/api/alerts?limit=200&sort=newest").get_json()
+        self.assertEqual(
+            [alert["id"] for alert in newest],
+            sorted((alert["id"] for alert in full), reverse=True),
+        )
+
+    def test_alert_query_validation_and_compliance_pseudonymization(self):
+        with patch.object(
+            model, "_run_ensemble", side_effect=self._fake_ensemble
+        ):
+            for query in (
+                "limit=0",
+                "limit=201",
+                "limit=abc",
+                "offset=-1",
+                "offset=x",
+                "sort=oldest",
+            ):
+                with self.subTest(query=query):
+                    response = self.admin.get(f"/api/alerts?{query}")
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("error", response.get_json())
+
+            compliance = self.app.test_client()
+            with compliance.session_transaction() as session:
+                session["username"] = "compliance-user"
+                session["role"] = "compliance"
+            response = compliance.get("/api/compliance/alerts?limit=1")
+
+        self.assertEqual(response.status_code, 200)
+        alert = response.get_json()[0]
+        self.assertEqual(alert["id"], 597)
+        self.assertEqual(alert["user"], hash_identifier("researcher_597"))
+        self.assertEqual(response.headers["X-Total-Flagged"], "49")
+        self.assertEqual(response.headers["X-Returned"], "1")
+
+
 class RiskScoreGoldenTest(unittest.TestCase):
     def setUp(self):
         self.previous_database_path = database.DB_PATH

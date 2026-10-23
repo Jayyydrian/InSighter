@@ -145,10 +145,48 @@ def dashboard():
 def scores():
     return jsonify(score_users())
 
+
+def _alert_page_options():
+    raw_limit = request.args.get("limit", "25")
+    raw_offset = request.args.get("offset", "0")
+    sort = request.args.get("sort", "priority")
+    if not re.fullmatch(r"[0-9]+", raw_limit, flags=re.ASCII):
+        raise ValueError("limit must be an integer between 1 and 200.")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be an integer between 1 and 200.")
+    if not re.fullmatch(r"[0-9]+", raw_offset, flags=re.ASCII):
+        raise ValueError("offset must be a non-negative integer.")
+    offset = int(raw_offset)
+    if sort not in {"priority", "newest"}:
+        raise ValueError("sort must be 'priority' or 'newest'.")
+    return limit, offset, sort
+
+
+def _paginated_alert_response(compliance=False):
+    try:
+        limit, offset, sort = _alert_page_options()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    alerts = get_recent_alerts(limit=None, sort=sort)
+    total = len(alerts)
+    page = alerts[offset:offset + limit]
+    if compliance:
+        page = [
+            {**alert, "user": hash_identifier(alert["user"])}
+            for alert in page
+        ]
+    response = jsonify(page)
+    response.headers["X-Total-Flagged"] = str(total)
+    response.headers["X-Returned"] = str(len(page))
+    return response
+
+
 @app.route("/api/alerts")
 @admin_required
 def alerts():
-    return jsonify(get_recent_alerts())
+    return _paginated_alert_response()
 
 
 # In-memory cache for AI explanations, keyed by alert (log) id -- the underlying
@@ -289,7 +327,7 @@ def explain_alert_route(alert_id):
     if cached is not None:
         return jsonify(cached)
 
-    alert = next((a for a in get_recent_alerts() if a["id"] == alert_id), None)
+    alert = next((a for a in get_recent_alerts(limit=None) if a["id"] == alert_id), None)
     if alert is None:
         return jsonify({"error": "Alert not found (it may have scrolled out of the recent window)."}), 404
 
@@ -466,10 +504,7 @@ def baseline_setup_reset():
 @compliance_required
 def compliance_alerts():
     """Return flagged incidents with stable pseudonymous user identifiers."""
-    return jsonify([
-        {**alert, "user": hash_identifier(alert["user"])}
-        for alert in get_recent_alerts()
-    ])
+    return _paginated_alert_response(compliance=True)
 
 @app.route("/api/sessions")
 @admin_required
@@ -615,7 +650,10 @@ def get_uav_config():
 @app.route("/api/uav-config", methods=["POST"])
 @admin_required
 def update_uav_config():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
     # Only change the sector if the caller explicitly included it; otherwise
     # keep whatever is currently configured. Missing keys should not silently
     # revert the deployment to a removed sector.

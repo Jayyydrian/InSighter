@@ -758,7 +758,7 @@ class ExplainAlertRouteTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.original_alerts = app.get_recent_alerts
-        app.get_recent_alerts = lambda: [SAMPLE_ALERT]
+        app.get_recent_alerts = lambda **kwargs: [SAMPLE_ALERT]
 
     @classmethod
     def tearDownClass(cls):
