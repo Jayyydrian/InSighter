@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -140,6 +141,82 @@ class ServerLauncherTest(unittest.TestCase):
             self.assertFalse(server_launcher._ensure_local_secret())
             self.assertEqual(os.environ["INSIGHTER_SECRET_KEY"], key)
             self.assertEqual(restrict.call_count, 4)
+
+    @unittest.skipUnless(os.name == "nt", "icacls is available only on Windows")
+    def test_missing_secret_creates_directory_before_restricting_it(self):
+        local_app_data = self.root / "new-localappdata"
+        secret_dir = local_app_data / "InSighter"
+        secret_file = secret_dir / "secret_key"
+        os.environ["LOCALAPPDATA"] = str(local_app_data)
+        os.environ.pop("INSIGHTER_SECRET_KEY", None)
+        calls = []
+
+        def fake_icacls(args, **kwargs):
+            self.assertEqual(args[0], "icacls")
+            path = Path(args[1])
+            self.assertTrue(kwargs["env"]["INSIGHTER_DB_PATH"])
+            self.assertTrue(kwargs["env"]["INSIGHTER_PORT"])
+            calls.append((path, path.is_dir()))
+            if not path.exists():
+                return subprocess.CompletedProcess(
+                    args, 1, stdout="", stderr=f"{path}: The system cannot find the file specified."
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with patch.object(server_launcher.subprocess, "run", side_effect=fake_icacls):
+            self.assertTrue(server_launcher._ensure_local_secret())
+
+        self.assertTrue(secret_dir.is_dir())
+        self.assertTrue(secret_file.is_file())
+        self.assertEqual(calls, [(secret_dir, True), (secret_file, False)])
+        self.assertEqual(os.environ["INSIGHTER_SECRET_KEY"], secret_file.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.name == "nt", "icacls is available only on Windows")
+    def test_existing_secret_directory_without_key_file_is_restricted_then_populated(self):
+        local_app_data = self.root / "existing-localappdata"
+        secret_dir = local_app_data / "InSighter"
+        secret_dir.mkdir(parents=True)
+        secret_file = secret_dir / "secret_key"
+        os.environ["LOCALAPPDATA"] = str(local_app_data)
+        os.environ.pop("INSIGHTER_SECRET_KEY", None)
+        calls = []
+
+        def fake_icacls(args, **kwargs):
+            self.assertEqual(args[0], "icacls")
+            path = Path(args[1])
+            self.assertTrue(kwargs["env"]["INSIGHTER_DB_PATH"])
+            self.assertTrue(kwargs["env"]["INSIGHTER_PORT"])
+            calls.append((path, path.is_dir()))
+            if not path.exists():
+                return subprocess.CompletedProcess(
+                    args, 1, stdout="", stderr=f"{path}: The system cannot find the file specified."
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with patch.object(server_launcher.subprocess, "run", side_effect=fake_icacls):
+            self.assertTrue(server_launcher._ensure_local_secret())
+
+        self.assertTrue(secret_file.is_file())
+        self.assertEqual(calls, [(secret_dir, True), (secret_file, False)])
+
+    def test_missing_localappdata_reports_plain_error(self):
+        os.environ.pop("LOCALAPPDATA", None)
+        os.environ.pop("INSIGHTER_SECRET_KEY", None)
+        with patch.object(server_launcher.Path, "home", return_value=self.root / "fakehome"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "LOCALAPPDATA must be set to create the local InSighter signing key",
+            ):
+                server_launcher._ensure_local_secret()
+
+    def test_empty_localappdata_reports_plain_error(self):
+        os.environ["LOCALAPPDATA"] = " "
+        os.environ.pop("INSIGHTER_SECRET_KEY", None)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "LOCALAPPDATA must be set to create the local InSighter signing key",
+        ):
+            server_launcher._ensure_local_secret()
 
     def test_sqlcipher_requires_a_separate_database_key_before_secret_generation(self):
         secret_path = self.root / "localappdata" / "InSighter" / "secret_key"

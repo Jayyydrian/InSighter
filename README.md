@@ -113,7 +113,8 @@ to `backend_startup.log` in the project folder, replacing that log at each start
 `%LOCALAPPDATA%\InSighter\secret_key`; on Windows, access is restricted to the current
 user. A user-supplied `INSIGHTER_SECRET_KEY` takes precedence over that local file.
 When SQLCipher is installed, set `INSIGHTER_DB_KEY` separately; desktop startup refuses
-to use the signing key as a database key.
+to use the signing key as a database key. The generated key is for local desktop use
+only; deployments must set `INSIGHTER_SECRET_KEY` and `INSIGHTER_DB_KEY` themselves.
 
 ### Optional Local Demo Accounts
 

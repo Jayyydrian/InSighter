@@ -233,9 +233,11 @@ def _restrict_local_secret_permissions(path, is_directory=False):
 def _local_secret_path():
     """Return the per-user path used for a generated local signing key."""
     local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "InSighter" / "secret_key"
-    return Path.home() / "AppData" / "Local" / "InSighter" / "secret_key"
+    if not local_app_data or not local_app_data.strip():
+        raise RuntimeError(
+            "LOCALAPPDATA must be set to create the local InSighter signing key."
+        )
+    return Path(local_app_data).expanduser() / "InSighter" / "secret_key"
 
 
 def _ensure_local_secret():
@@ -247,6 +249,10 @@ def _ensure_local_secret():
     secret_file = _local_secret_path()
     secret_dir = secret_file.parent
     secret_dir.mkdir(parents=True, exist_ok=True)
+    if not secret_dir.is_dir():
+        raise RuntimeError(
+            f"Could not create the local InSighter secret directory: {secret_dir}"
+        )
     _restrict_local_secret_permissions(secret_dir, is_directory=True)
 
     generated = False
