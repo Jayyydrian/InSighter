@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 from desktop_app import server_launcher
 
+_ORIGINAL_VERIFY_DIRECTORY_VISIBLE = server_launcher._verify_directory_visible_outside_python
+
 
 class FakeProcess:
     def __init__(self, returncode=None):
@@ -48,6 +50,7 @@ class ServerLauncherTest(unittest.TestCase):
                 "INSIGHTER_DB_KEY": "explicit-test-db-key",
                 "INSIGHTER_SECRET_KEY": "explicit-test-key",
                 "LOCALAPPDATA": str(self.root / "localappdata"),
+                "USERPROFILE": str(self.root / "userprofile"),
                 "QT_QPA_PLATFORM": "offscreen",
                 "INSIGHTER_DISABLE_BACKGROUND_SIM": "1",
                 "INSIGHTER_LLM_WARMUP": "0",
@@ -69,6 +72,11 @@ class ServerLauncherTest(unittest.TestCase):
         server_launcher._server_process = None
         server_launcher.last_error = ""
         self.addCleanup(self._restore_globals)
+        visibility_check = patch.object(
+            server_launcher, "_verify_directory_visible_outside_python"
+        )
+        visibility_check.start()
+        self.addCleanup(visibility_check.stop)
 
     def _restore_globals(self):
         (
@@ -116,7 +124,7 @@ class ServerLauncherTest(unittest.TestCase):
         self.assertIn("last lines:", server_launcher.last_error)
 
     def test_missing_secret_is_generated_once_persisted_and_never_logged(self):
-        secret_path = self.root / "localappdata" / "InSighter" / "secret_key"
+        secret_path = self.root / "userprofile" / ".insighter" / "secret_key"
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         process = FakeProcess()
         patches, popen = self._prepare_successful_fake_start(process)
@@ -144,18 +152,18 @@ class ServerLauncherTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "icacls is available only on Windows")
     def test_missing_secret_creates_directory_before_restricting_it(self):
-        local_app_data = self.root / "new-localappdata"
-        secret_dir = local_app_data / "InSighter"
+        user_profile = self.root / "new-userprofile"
+        secret_dir = user_profile / ".insighter"
         secret_file = secret_dir / "secret_key"
-        os.environ["LOCALAPPDATA"] = str(local_app_data)
+        os.environ["USERPROFILE"] = str(user_profile)
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         calls = []
 
         def fake_icacls(args, **kwargs):
             self.assertEqual(args[0], "icacls")
-            path = Path(args[1])
             self.assertTrue(kwargs["env"]["INSIGHTER_DB_PATH"])
             self.assertTrue(kwargs["env"]["INSIGHTER_PORT"])
+            path = Path(args[1])
             calls.append((path, path.is_dir()))
             if not path.exists():
                 return subprocess.CompletedProcess(
@@ -168,24 +176,30 @@ class ServerLauncherTest(unittest.TestCase):
 
         self.assertTrue(secret_dir.is_dir())
         self.assertTrue(secret_file.is_file())
-        self.assertEqual(calls, [(secret_dir, True), (secret_file, False)])
+        self.assertEqual(
+            calls,
+            [
+                (secret_dir, True),
+                (secret_file, False),
+            ],
+        )
         self.assertEqual(os.environ["INSIGHTER_SECRET_KEY"], secret_file.read_text(encoding="utf-8"))
 
     @unittest.skipUnless(os.name == "nt", "icacls is available only on Windows")
     def test_existing_secret_directory_without_key_file_is_restricted_then_populated(self):
-        local_app_data = self.root / "existing-localappdata"
-        secret_dir = local_app_data / "InSighter"
+        user_profile = self.root / "existing-userprofile"
+        secret_dir = user_profile / ".insighter"
         secret_dir.mkdir(parents=True)
         secret_file = secret_dir / "secret_key"
-        os.environ["LOCALAPPDATA"] = str(local_app_data)
+        os.environ["USERPROFILE"] = str(user_profile)
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         calls = []
 
         def fake_icacls(args, **kwargs):
             self.assertEqual(args[0], "icacls")
-            path = Path(args[1])
             self.assertTrue(kwargs["env"]["INSIGHTER_DB_PATH"])
             self.assertTrue(kwargs["env"]["INSIGHTER_PORT"])
+            path = Path(args[1])
             calls.append((path, path.is_dir()))
             if not path.exists():
                 return subprocess.CompletedProcess(
@@ -197,29 +211,93 @@ class ServerLauncherTest(unittest.TestCase):
             self.assertTrue(server_launcher._ensure_local_secret())
 
         self.assertTrue(secret_file.is_file())
-        self.assertEqual(calls, [(secret_dir, True), (secret_file, False)])
+        self.assertEqual(
+            calls,
+            [
+                (secret_dir, True),
+                (secret_file, False),
+            ],
+        )
 
-    def test_missing_localappdata_reports_plain_error(self):
-        os.environ.pop("LOCALAPPDATA", None)
+    @unittest.skipUnless(os.name == "nt", "external visibility check is Windows-only")
+    def test_external_visibility_failure_names_python_and_prevents_key_use(self):
+        secret_dir = self.root / "userprofile" / ".insighter"
+        secret_file = secret_dir / "secret_key"
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
-        with patch.object(server_launcher.Path, "home", return_value=self.root / "fakehome"):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "LOCALAPPDATA must be set to create the local InSighter signing key",
-            ):
+
+        def invisible_directory(args, **kwargs):
+            self.assertEqual(args[0].lower(), "cmd.exe")
+            self.assertTrue(kwargs["env"]["INSIGHTER_DB_PATH"])
+            self.assertTrue(kwargs["env"]["INSIGHTER_PORT"])
+            self.assertTrue(Path(args[-1]).is_dir())
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="directory is not externally visible"
+            )
+
+        with (
+            patch.object(server_launcher.subprocess, "run", side_effect=invisible_directory),
+            patch.object(
+                server_launcher,
+                "_verify_directory_visible_outside_python",
+                side_effect=_ORIGINAL_VERIFY_DIRECTORY_VISIBLE,
+            ),
+            patch.object(server_launcher, "_restrict_local_secret_permissions") as restrict,
+        ):
+            with self.assertRaises(RuntimeError) as error:
                 server_launcher._ensure_local_secret()
 
-    def test_empty_localappdata_reports_plain_error(self):
-        os.environ["LOCALAPPDATA"] = " "
+        self.assertIn(sys.executable, str(error.exception))
+        self.assertIn("not visible outside Python", str(error.exception))
+        self.assertFalse(secret_file.exists())
+        self.assertNotIn("INSIGHTER_SECRET_KEY", os.environ)
+        restrict.assert_not_called()
+
+    def test_default_key_path_uses_userprofile_not_localappdata(self):
+        user_profile = self.root / "profile"
+        local_app_data = self.root / "store-virtualized-localappdata"
+        os.environ["USERPROFILE"] = str(user_profile)
+        os.environ["LOCALAPPDATA"] = str(local_app_data)
+        self.assertEqual(
+            server_launcher._local_secret_path(),
+            user_profile / ".insighter" / "secret_key",
+        )
+        self.assertNotEqual(
+            server_launcher._local_secret_path(),
+            local_app_data / "InSighter" / "secret_key",
+        )
+
+    def test_user_secret_wins_without_userprofile(self):
+        os.environ.pop("USERPROFILE", None)
+        os.environ["INSIGHTER_SECRET_KEY"] = "explicit-user-signing-key"
+        with (
+            patch.object(server_launcher, "_verify_directory_visible_outside_python") as verify,
+            patch.object(server_launcher, "_restrict_local_secret_permissions") as restrict,
+        ):
+            self.assertFalse(server_launcher._ensure_local_secret())
+        self.assertEqual(os.environ["INSIGHTER_SECRET_KEY"], "explicit-user-signing-key")
+        verify.assert_not_called()
+        restrict.assert_not_called()
+
+    def test_missing_userprofile_reports_plain_error(self):
+        os.environ.pop("USERPROFILE", None)
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         with self.assertRaisesRegex(
             RuntimeError,
-            "LOCALAPPDATA must be set to create the local InSighter signing key",
+            "USERPROFILE must be set to create the local InSighter signing key",
+        ):
+            server_launcher._ensure_local_secret()
+
+    def test_empty_userprofile_reports_plain_error(self):
+        os.environ["USERPROFILE"] = " "
+        os.environ.pop("INSIGHTER_SECRET_KEY", None)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "USERPROFILE must be set to create the local InSighter signing key",
         ):
             server_launcher._ensure_local_secret()
 
     def test_sqlcipher_requires_a_separate_database_key_before_secret_generation(self):
-        secret_path = self.root / "localappdata" / "InSighter" / "secret_key"
+        secret_path = self.root / "userprofile" / ".insighter" / "secret_key"
         os.environ.pop("INSIGHTER_DB_KEY", None)
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         process = FakeProcess()
@@ -258,7 +336,7 @@ class ServerLauncherTest(unittest.TestCase):
         self.assertIn("INSIGHTER_SECRET_KEY", popen.call_args.kwargs["env"])
 
     def test_acl_failure_prevents_generated_secret_file_creation(self):
-        secret_path = self.root / "localappdata" / "InSighter" / "secret_key"
+        secret_path = self.root / "userprofile" / ".insighter" / "secret_key"
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         with (
             patch.object(server_launcher, "_sqlcipher_available", return_value=False),
@@ -281,7 +359,7 @@ class ServerLauncherTest(unittest.TestCase):
         spawn.assert_not_called()
 
     def test_acl_failure_on_generated_key_removes_unsecured_file(self):
-        secret_path = self.root / "localappdata" / "InSighter" / "secret_key"
+        secret_path = self.root / "userprofile" / ".insighter" / "secret_key"
         os.environ.pop("INSIGHTER_SECRET_KEY", None)
         with patch.object(
             server_launcher,

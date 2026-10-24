@@ -232,12 +232,32 @@ def _restrict_local_secret_permissions(path, is_directory=False):
 
 def _local_secret_path():
     """Return the per-user path used for a generated local signing key."""
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data or not local_app_data.strip():
+    user_profile = os.environ.get("USERPROFILE")
+    if not user_profile or not user_profile.strip():
         raise RuntimeError(
-            "LOCALAPPDATA must be set to create the local InSighter signing key."
+            "USERPROFILE must be set to create the local InSighter signing key."
         )
-    return Path(local_app_data).expanduser() / "InSighter" / "secret_key"
+    return Path(user_profile).expanduser() / ".insighter" / "secret_key"
+
+
+def _verify_directory_visible_outside_python(path):
+    if os.name != "nt":
+        return
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", "dir", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            f"The local InSighter secret directory {path} is not visible outside Python "
+            f"when using {sys.executable}. "
+            f"{detail}"
+        )
 
 
 def _ensure_local_secret():
@@ -253,6 +273,7 @@ def _ensure_local_secret():
         raise RuntimeError(
             f"Could not create the local InSighter secret directory: {secret_dir}"
         )
+    _verify_directory_visible_outside_python(secret_dir)
     _restrict_local_secret_permissions(secret_dir, is_directory=True)
 
     generated = False
