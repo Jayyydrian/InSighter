@@ -105,6 +105,29 @@ move session storage and login throttling to a shared Redis/database service bef
 horizontal scaling. Enable SQLCipher and provide `INSIGHTER_DB_KEY` where database-at-rest
 encryption is required.
 
+### Optional Local Demo Accounts
+
+To explicitly create the historical demo accounts in the configured database, run:
+
+```bash
+python scripts/demo_accounts.py create
+```
+
+This creates `admin` / `admin123` (admin), `manager` / `manager123` (management),
+and `hr_officer` / `hr_officer123` (compliance). These published demo credentials
+are intentionally opt-in and must only be used on a local demo instance; do not
+use them on a network-exposed or production system. Creation refuses to overwrite
+any account with one of these usernames.
+
+Remove only accounts created by this command with:
+
+```bash
+python scripts/demo_accounts.py remove
+```
+
+Accounts provisioned this way are marked in the database, so removal will not delete
+an ordinary account that happens to use one of the same usernames.
+
 Production environment checklist:
 
 - Set `INSIGHTER_SECRET_KEY` to a stable, high-entropy secret from a secret manager.

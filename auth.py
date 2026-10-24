@@ -215,7 +215,8 @@ def init_users_table():
     if "is_active" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE users SET is_active = 0")
-        conn.execute("UPDATE users SET is_active = 0")
+    if "is_demo" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS auth_sessions (
             sid_hash TEXT PRIMARY KEY, data TEXT NOT NULL, created_at REAL NOT NULL, last_seen REAL NOT NULL
