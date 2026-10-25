@@ -22,9 +22,7 @@ Demo-enabled run (local use only)
 The venv and activation steps above are one-time setup. Install desktop dependencies with:
 pip install -r requirements.txt -r requirements-desktop.txt
 
-Set a signing key for this PowerShell session (the launcher does not generate one yet):
-$env:INSIGHTER_SECRET_KEY = python -c "import secrets; print(secrets.token_urlsafe(48))"
-Set it in the same terminal you launch from; a new terminal needs it again.
+The launcher generates a local signing key on first start (stored in your user profile folder, local use only). Deployments must set INSIGHTER_SECRET_KEY and INSIGHTER_DB_KEY themselves.
 
 Create the demo accounts:
 python scripts/demo_accounts.py create
@@ -44,6 +42,6 @@ python scripts/demo_accounts.py remove
 
 Troubleshooting:
 - "Invalid username or password" on a fresh database: python scripts/demo_accounts.py create was skipped, or the script and app used different databases; use the same INSIGHTER_DB_PATH for both, or leave it unset for both.
-- If startup fails, check backend_startup.log in the project folder.
-- If port 5051 is occupied, the launcher reports a port conflict; close that process or set INSIGHTER_PORT to a free port.
-- The first start can take several seconds; wait for the login window.
+- If startup fails, the error dialog shows the last lines of backend_startup.log in the project folder.
+- If port 5051 is occupied by another program, the launcher uses the next free port and prints which one.
+- The first start can take up to a minute; wait for the login window.
