@@ -105,6 +105,19 @@ move session storage and login throttling to a shared Redis/database service bef
 horizontal scaling. Enable SQLCipher and provide `INSIGHTER_DB_KEY` where database-at-rest
 encryption is required.
 
+### Desktop startup and local secrets
+
+The desktop launcher reports the selected database path and writes startup diagnostics
+to `backend_startup.log` in the project folder, replacing that log at each start. If
+`INSIGHTER_SECRET_KEY` is unset, it creates a persistent signing key at
+`%USERPROFILE%\.insighter\secret_key`; on Windows, access is restricted to the current
+user. The launcher verifies that the directory is visible outside Python before it
+applies permissions. A user-supplied `INSIGHTER_SECRET_KEY` takes precedence over that
+local file.
+When SQLCipher is installed, set `INSIGHTER_DB_KEY` separately; desktop startup refuses
+to use the signing key as a database key. The generated key is for local desktop use
+only; deployments must set `INSIGHTER_SECRET_KEY` and `INSIGHTER_DB_KEY` themselves.
+
 ### Optional Local Demo Accounts
 
 To explicitly create the historical demo accounts in the configured database, run:
