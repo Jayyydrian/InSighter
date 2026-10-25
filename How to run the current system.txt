@@ -17,6 +17,31 @@ Install and start Ollama, then pull the default AI Analysis model:
 
 ollama pull phi4-mini
 
+Demo-enabled run (local use only)
+
+The venv and activation steps above are one-time setup. Install desktop dependencies with:
+pip install -r requirements.txt -r requirements-desktop.txt
+
+The launcher generates a local signing key on first start (stored in your user profile folder, local use only). Deployments must set INSIGHTER_SECRET_KEY and INSIGHTER_DB_KEY themselves.
+
+Create the demo accounts:
+python scripts/demo_accounts.py create
+
+Launch the desktop app:
 python desktop_app/main.py
 
+Demo logins:
+Username       Password        Role        What it can see
+admin          admin123        admin       Full access
+manager        manager123      management  Summary-only
+hr_officer     hr_officer123   compliance  Pseudonymized records
 
+These accounts use well-known passwords and are for local demos only. Never create them
+on a deployment or shared machine. Remove them with:
+python scripts/demo_accounts.py remove
+
+Troubleshooting:
+- "Invalid username or password" on a fresh database: python scripts/demo_accounts.py create was skipped, or the script and app used different databases; use the same INSIGHTER_DB_PATH for both, or leave it unset for both.
+- If startup fails, the error dialog shows the last lines of backend_startup.log in the project folder.
+- If port 5051 is occupied by another program, the launcher uses the next free port and prints which one.
+- The first start can take up to a minute; wait for the login window.
