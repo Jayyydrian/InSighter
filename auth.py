@@ -21,7 +21,7 @@ import os
 import secrets
 import time
 from functools import wraps
-from flask import has_request_context, session, redirect, url_for, request, render_template
+from flask import has_request_context, session, redirect, url_for, request, jsonify
 from flask.sessions import SessionInterface, SessionMixin
 from werkzeug.datastructures import CallbackDict
 from database import connect
@@ -395,7 +395,7 @@ def admin_required(view_func):
             session.clear()
             return redirect(url_for("login", next=request.path))
         if user["role"] != "admin":
-            return render_template("forbidden.html"), 403
+            return jsonify({"error": "forbidden"}), 403
         return view_func(*args, **kwargs)
     return wrapped
 
@@ -409,6 +409,6 @@ def compliance_required(view_func):
             session.clear()
             return redirect(url_for("login", next=request.path))
         if user["role"] != "compliance":
-            return render_template("forbidden.html"), 403
+            return jsonify({"error": "forbidden"}), 403
         return view_func(*args, **kwargs)
     return wrapped
