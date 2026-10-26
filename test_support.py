@@ -1,10 +1,45 @@
+import atexit
+from contextlib import contextmanager
 import os
 import tempfile
 
 import database
 
-os.environ.setdefault("INSIGHTER_SECRET_KEY", "test-only-signing-key-32-bytes-minimum")
-os.environ.setdefault("INSIGHTER_PII_SECRET", "test-only-pii-key-32-bytes-minimum")
+TEST_SECRET = "test-only-not-a-secret"
+_TEST_SECRET_NAMES = ("INSIGHTER_SECRET_KEY", "INSIGHTER_PII_SECRET")
+_original_secrets = {
+    name: os.environ.get(name)
+    for name in _TEST_SECRET_NAMES
+}
+
+
+def _restore_secrets(originals):
+    for name, value in originals.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+def _restore_import_environment():
+    _restore_secrets(_original_secrets)
+
+
+@contextmanager
+def test_environment():
+    originals = {name: os.environ.get(name) for name in _TEST_SECRET_NAMES}
+    try:
+        for name in _TEST_SECRET_NAMES:
+            os.environ[name] = TEST_SECRET
+        yield
+    finally:
+        _restore_secrets(originals)
+
+
+for _name in _TEST_SECRET_NAMES:
+    os.environ[_name] = TEST_SECRET
+
+atexit.register(_restore_import_environment)
 
 
 _database_directory = None
