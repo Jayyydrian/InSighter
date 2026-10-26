@@ -2,7 +2,7 @@ import logging
 import math
 import re
 
-from flask import Flask, render_template, jsonify, request, redirect, url_for, session
+from flask import Flask, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
 from model import get_learned_role_baselines, score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
@@ -116,7 +116,7 @@ def csrf_token():
 def login():
     if request.method == "GET":
         session.setdefault("csrf_token", secrets.token_urlsafe(32))
-        return render_template("login.html", error=None, csrf_token=session["csrf_token"])
+        return jsonify({"message": "Sign in through the InSighter desktop application."})
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -129,20 +129,13 @@ def login():
             session["role"] = role["role"]
             session["csrf_token"] = secrets.token_urlsafe(32)
             log_action(username, "LOGIN_SUCCESS", f"role={role['role']}")
-            next_url = request.args.get("next") or url_for("dashboard")
+            next_url = request.args.get("next") or "/"
             return redirect(_safe_local_redirect(next_url))
         if retry_after:
             log_action(username or "(blank)", "LOGIN_COOLDOWN", "too many failed attempts")
-            return render_template(
-                "login.html", error="Invalid username or password.",
-                csrf_token=session.get("csrf_token", ""),
-            ), 401
+            return jsonify({"error": "Invalid username or password."}), 401
         log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
-        return render_template(
-            "login.html", error="Invalid username or password.",
-            csrf_token=session.get("csrf_token", ""),
-        ), 401
-    return render_template("login.html", error=None, csrf_token=session.get("csrf_token", ""))
+        return jsonify({"error": "Invalid username or password."}), 401
 
 
 def _safe_local_redirect(target):
@@ -150,9 +143,9 @@ def _safe_local_redirect(target):
 
     parsed = urlsplit(target or "")
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
-        return url_for("dashboard")
+        return "/"
     if parsed.path.startswith("//") or "\\" in target:
-        return url_for("dashboard")
+        return "/"
     return target
 
 
@@ -165,26 +158,6 @@ def logout():
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
-@app.route("/")
-@login_required
-def dashboard():
-    if session.get("role") == "admin":
-        return render_template("dashboard.html")
-
-    # management role: aggregate-only summary view, no individual user data
-    users = score_users()
-    counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
-    for u in users:
-        counts[u["risk_level"]] = counts.get(u["risk_level"], 0) + 1
-    return render_template(
-        "summary.html",
-        username=session.get("username"),
-        role=session.get("role"),
-        high_count=counts["HIGH"],
-        medium_count=counts["MEDIUM"],
-        low_count=counts["LOW"],
-    )
-
 @app.route("/api/scores")
 @admin_required
 def scores():

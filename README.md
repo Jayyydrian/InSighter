@@ -20,11 +20,8 @@ Runs locally in under 2 minutes.
 
 AI-assisted insider threat detection proof-of-concept.
 
-Two ways to run it:
-1. **Desktop app (PyQt6)** — matches Chapter 3's Presentation Tier spec. Recommended.
-2. **Web dashboard (Flask + browser)** — kept for quick testing/demo convenience.
-
-Both talk to the same backend (Logic + Authentication + Data tiers).
+The PyQt6 desktop app is the user interface. It talks over local HTTP to the Flask
+backend, which provides the Logic, Authentication, and Data tiers.
 
 ---
 
@@ -199,17 +196,6 @@ demos, set `INSIGHTER_LLM_KEEP_ALIVE=2h` to keep it loaded longer.
 
 ---
 
-## Quick Start — Web Dashboard (alternative)
-
-```bash
-pip install -r requirements.txt
-python app.py
-```
-Open `http://localhost:5051` and log in with the same accounts above.
-
-The database is auto-seeded on first run.
-Use the **↺ Reseed Data** button to regenerate fresh logs anytime.
-
 ### REST ingestion and protected storage
 
 Configure a compatible event source before using **Ingest Events** in the desktop
@@ -287,11 +273,6 @@ Insighter/
 ├── model.py                   ← Isolation Forest + One-Class SVM ensemble
 ├── requirements.txt
 ├── database.db                ← SQLite DB (auto-created on first run)
-├── templates/                 ← Web dashboard UI (Flask-rendered)
-│   ├── dashboard.html
-│   ├── login.html
-│   ├── summary.html
-│   └── forbidden.html
 └── desktop_app/                ← PyQt6 Presentation Tier (Chapter 3 spec)
     ├── main.py                ← Entry point
     ├── server_launcher.py     ← Boots the Flask backend as a background thread
@@ -315,8 +296,8 @@ Chapter 3 specifies a **PyQt6 desktop application** as the presentation tier, in
 the IT administrator's machine. The desktop app in `desktop_app/` implements this: it is a
 pure UI layer that talks to the Flask backend (`app.py`) over local HTTP (`127.0.0.1:5050`),
 matching the tiered architecture (Presentation ↔ Authentication ↔ Logic ↔ Data) described in
-the design chapter. The Flask web dashboard (`templates/`) is retained separately for quick
-browser-based testing and is not the primary deliverable.
+the design chapter. The Flask backend exposes the API used by the desktop client; there is no
+browser UI.
 
 **Still simplified vs. the full Chapter 3 design** (tracked as remaining work):
 - Session-based auth is used instead of JWT (reasonable for a server-rendered/local desktop
@@ -350,4 +331,3 @@ Eve exhibits: off-hours logins, excessive file access, large data transfers, rep
 - **bcrypt** — password hashing
 - **SQLite** — log & user storage
 - **cryptography** — protected event payloads
-- **Vanilla HTML/CSS/JS** — web dashboard alternative (no extra installs)
