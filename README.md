@@ -114,6 +114,8 @@ local file.
 When SQLCipher is installed, set `INSIGHTER_DB_KEY` separately; desktop startup refuses
 to use the signing key as a database key. The generated key is for local desktop use
 only; deployments must set `INSIGHTER_SECRET_KEY` and `INSIGHTER_DB_KEY` themselves.
+Variables set in your shell or Windows environment (for example `INSIGHTER_SECRET_KEY`)
+override the launcher's generated key. Clear the session copy to test a first run.
 
 ### Optional Local Demo Accounts
 
