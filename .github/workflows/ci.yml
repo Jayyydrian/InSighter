@@ -22,7 +22,7 @@ jobs:
       INSIGHTER_DISABLE_BACKGROUND_SIM: "1"
       INSIGHTER_LLM_WARMUP: "0"
       INSIGHTER_SECRET_KEY: ci-test-key
-      EXPECTED_MIN_TESTS: "233"   # raise this whenever you add tests
+      EXPECTED_MIN_TESTS: "238"   # raise this whenever you add tests
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
