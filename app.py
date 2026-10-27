@@ -861,8 +861,12 @@ def ingest():
         else:
             inserted = ingest_from_configured_source()
     except (BadRequest, ValueError, requests.RequestException, RuntimeError, OSError) as exc:
-        log_action(session.get("username"), "INGEST_FAILED", str(exc))
-        return jsonify({"error": str(exc)}), 400
+        log_action(
+            session.get("username"),
+            "INGEST_FAILED",
+            f"validation_failed;exception={type(exc).__name__}",
+        )
+        return jsonify({"error": "Invalid event data."}), 400
     log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
     return jsonify({"status": "ok", "inserted": inserted})
 
