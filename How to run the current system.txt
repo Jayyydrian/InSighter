@@ -1,17 +1,21 @@
 How to run the POC
 
-Open the file on vscode
+1. Open the project folder in VS Code and open a terminal.
 
-On the terminal put etong commands step by step
+2. Create a virtual environment:
+   python -m venv venv
 
-python -m venv venv
+3. Activate it using the command for your shell:
+   Windows PowerShell: venv\Scripts\Activate.ps1
+   If PowerShell blocks the script, run this once in that terminal:
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+   macOS/Linux: source venv/bin/activate
 
-venv\Scripts\activate
+4. Install backend dependencies:
+   pip install -r requirements.txt
 
-source venv/bin/activate (kung mac gamit)
-
-pip install -r requirements.txt(If nag ask ang vscode to create a separate environment, click create)
-(also kung may error na lumabas after non, its fine lang nag double process lang yon ng pag activte sa scripts)
+5. Install desktop dependencies:
+   pip install -r requirements-desktop.txt
 
 Install and start Ollama, then pull the default AI Analysis model:
 
@@ -19,8 +23,8 @@ ollama pull phi4-mini
 
 Demo-enabled run (local use only)
 
-The venv and activation steps above are one-time setup. Install desktop dependencies with:
-pip install -r requirements.txt -r requirements-desktop.txt
+The venv and activation steps above are one-time setup. The two dependency installs
+above are required in order: backend requirements first, then desktop requirements.
 
 The launcher generates a local signing key on first start (stored in your user profile folder, local use only). Deployments must set INSIGHTER_SECRET_KEY and INSIGHTER_DB_KEY themselves.
 
