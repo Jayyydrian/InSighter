@@ -32,9 +32,13 @@ backend, which provides the Logic, Authentication, and Data tiers.
 - Builds role-aware behavioral baselines and adds baseline deviation to risk scores
 - Varies anomalous and routine activity per live simulation tick; UAV simulation uses mission-appropriate numeric profiles and alert language
 - Accepts protected events from a configured REST API through the desktop Integrations page
-- Hashes identifiers and encrypts non-identity event payloads before storage
+- Stores raw event identifiers in `logs.user` and usernames/audit actors in plaintext;
+  encrypts the non-identity event payload. The compliance view pseudonymizes identifiers
+  in its output; this does not change the raw identifiers retained in storage.
 - Uses SQLCipher encryption automatically when `sqlcipher3` is installed, with SQLite fallback for development
-- Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
+- Login + RBAC: `admin` (full access), `compliance` (pseudonymized output), and
+  `management` (summary plus authenticated read access to taxonomy, monitoring scope,
+  integrations, and resources); the latter is broader than summary-only.
 - Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
 
 ## Supported sectors and legacy databases
@@ -102,6 +106,9 @@ move session storage and login throttling to a shared Redis/database service bef
 horizontal scaling. Enable SQLCipher and provide `INSIGHTER_DB_KEY` where database-at-rest
 encryption is required.
 
+When SQLCipher is unavailable, the application uses plaintext SQLite and
+`INSIGHTER_DB_KEY` has no effect; the key does not encrypt that database.
+
 ### Desktop startup and local secrets
 
 The desktop launcher reports the selected database path and writes startup diagnostics
@@ -139,6 +146,17 @@ python scripts/demo_accounts.py remove
 
 Accounts provisioned this way are marked in the database, so removal will not delete
 an ordinary account that happens to use one of the same usernames.
+
+### Recovering accounts from an older database
+
+Back up the database before migration or recovery. To inspect account status without
+password hashes, run `python scripts/reactivate_accounts.py list --db <database-path>`.
+To reactivate only selected existing accounts, run
+`python scripts/reactivate_accounts.py reactivate <username> [<username> ...] --db <database-path>`.
+The recovery command creates a timestamped backup and audit entry before changing status.
+It does not reset passwords; legacy bcrypt hashes from older databases are unsupported
+by the current verifier, so those accounts still need a separately managed password
+reset or re-provisioning before sign-in.
 
 Production environment checklist:
 
@@ -296,7 +314,7 @@ Insighter/
 
 Chapter 3 specifies a **PyQt6 desktop application** as the presentation tier, installed on
 the IT administrator's machine. The desktop app in `desktop_app/` implements this: it is a
-pure UI layer that talks to the Flask backend (`app.py`) over local HTTP (`127.0.0.1:5050`),
+pure UI layer that talks to the Flask backend (`app.py`) over local HTTP (`127.0.0.1:5051`),
 matching the tiered architecture (Presentation ↔ Authentication ↔ Logic ↔ Data) described in
 the design chapter. The Flask backend exposes the API used by the desktop client; there is no
 browser UI.
@@ -307,6 +325,14 @@ browser UI.
 - SQLCipher is optional because compatible builds vary by platform; SQLite remains the development fallback
 - REST ingestion is available, but provider-specific credentials and mappings are still required
 - No Edge Inference Engine (Raspberry Pi 5 / UAV) integration yet
+
+## Known limitations / ticket log
+
+- T1: Importing `app.py` calls `ensure_database()` and generates 1,440 demo rows
+  when logs are absent (`app.py:48–57`); this writes to the configured database even
+  when background simulation is disabled.
+- T3: CI's mutation check explicitly excludes `database.db`
+  (`scripts/run_tests_ci.py:15, 39–44`), so it does not detect tests that modify it.
 
 ---
 
