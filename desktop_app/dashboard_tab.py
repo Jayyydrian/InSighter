@@ -501,6 +501,7 @@ class DashboardTab(QWidget):
         self.history = {}
         self.last_users = []
         self.alerts = []
+        self.alert_total = 0
         self.threshold_high = DEFAULT_THRESHOLD_HIGH
         self.threshold_medium = DEFAULT_THRESHOLD_MEDIUM
         self._thresholds_fetched_at = 0.0
@@ -765,9 +766,12 @@ class DashboardTab(QWidget):
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
         def fetch():
+            get_alerts = getattr(self.client, "get_alerts_page", None)
+            if get_alerts is None:
+                get_alerts = self.client.get_alerts
             requests = [
                 ("scores", self.client.get_scores),
-                ("alerts", self.client.get_alerts),
+                ("alerts", get_alerts),
                 ("resources", self.client.get_resources),
                 ("thresholds", self.client.get_uav_config),
             ]
@@ -868,7 +872,7 @@ class DashboardTab(QWidget):
 
     def _refresh_runtime_status(self, resources):
         self.alert_meta.setText(
-            f"{self.alert_meta.property('alert_count') or 0} alerts · "
+            f"{self.alert_meta.property('alert_summary') or '0 alerts'} · "
             f"{resources.get('events_total', 0)} live events"
         )
 
@@ -1122,7 +1126,14 @@ class DashboardTab(QWidget):
         return w
 
     def _refresh_alerts(self, alerts):
-        self.alerts = list(alerts)
+        if isinstance(alerts, list):
+            alert_rows = alerts
+            total = len(alert_rows)
+        else:
+            alert_rows = alerts["alerts"]
+            total = alerts["total"]
+        self.alerts = list(alert_rows)
+        self.alert_total = max(total, len(self.alerts))
         self._render_alerts()
 
     def _render_alerts(self, *_args):
@@ -1137,12 +1148,17 @@ class DashboardTab(QWidget):
             if selected_severity is None
             or str(alert.get("severity", "")).upper() == selected_severity
         ]
-        self.alert_meta.setProperty("alert_count", len(alerts))
-        total = len(self.alerts)
-        self.alert_meta.setText(
-            f"{len(alerts)} of {total} alerts"
-            if len(alerts) != total else f"{total} alerts"
-        )
+        total = self.alert_total
+        summary = f"{total} alerts"
+        if len(self.alerts) < total:
+            summary += f" · showing {len(self.alerts)} of {total}"
+            if len(alerts) != len(self.alerts):
+                summary += f" · {len(alerts)} match filter"
+        elif len(alerts) != total:
+            summary = f"{len(alerts)} of {total} alerts"
+        self.alert_meta.setProperty("alert_count", total)
+        self.alert_meta.setProperty("alert_summary", summary)
+        self.alert_meta.setText(summary)
 
         if not alerts:
             empty = QLabel("No alerts")
