@@ -132,6 +132,17 @@ class ApiClient:
     def get_alerts(self):
         return self._get("/api/alerts")
 
+    def get_alerts_page(self):
+        response = self._get_response("/api/alerts")
+        alerts = self._json(response, "/api/alerts")
+        try:
+            total = int(response.headers["X-Total-Flagged"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise self._unexpected_response(
+                "The backend returned an invalid alert total."
+            ) from exc
+        return {"alerts": alerts, "total": total}
+
     def explain_alert(self, alert_id):
         server_timeout = float(os.environ.get(
             "INSIGHTER_LLM_TIMEOUT",
@@ -221,6 +232,9 @@ class ApiClient:
         return self._json(response, path)
 
     def _get(self, path, timeout=None):
+        return self._json(self._get_response(path, timeout=timeout), path)
+
+    def _get_response(self, path, timeout=None):
         kwargs = {} if timeout is None else {"timeout": timeout}
         resp = self._request("GET", path, **kwargs)
         if resp.status_code == 401:
@@ -229,7 +243,7 @@ class ApiClient:
             raise ApiError(403, "Access restricted to administrator accounts.")
         if resp.status_code != 200:
             raise ApiError(resp.status_code, f"Request to {path} failed.")
-        return self._json(resp, path)
+        return resp
 
     def _put(self, path, payload=None, timeout=None):
         kwargs = {} if timeout is None else {"timeout": timeout}

@@ -271,9 +271,12 @@ class DashboardTab(QWidget):
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
         def fetch():
+            get_alerts = getattr(self.client, "get_alerts_page", None)
+            if get_alerts is None:
+                get_alerts = self.client.get_alerts
             requests = [
                 ("scores", self.client.get_scores),
-                ("alerts", self.client.get_alerts),
+                ("alerts", get_alerts),
                 ("resources", self.client.get_resources),
             ]
             results = {}
@@ -316,7 +319,7 @@ class DashboardTab(QWidget):
 
     def _refresh_runtime_status(self, resources):
         self.alert_meta.setText(
-            f"{self.alert_meta.property('alert_count') or 0} alerts · "
+            f"{self.alert_meta.property('alert_summary') or '0 alerts'} · "
             f"{resources.get('events_total', 0)} live events"
         )
 
@@ -502,21 +505,32 @@ class DashboardTab(QWidget):
             )
 
     def _refresh_alerts(self, alerts):
+        if isinstance(alerts, list):
+            alert_rows = alerts
+            total = len(alert_rows)
+        else:
+            alert_rows = alerts["alerts"]
+            total = alerts["total"]
+        summary = f"{total} alerts"
+        if len(alert_rows) < total:
+            summary += f" · showing {len(alert_rows)} of {total}"
+
         while self.alert_layout.count():
             item = self.alert_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        self.alert_meta.setProperty("alert_count", len(alerts))
-        self.alert_meta.setText(f"{len(alerts)} alerts")
+        self.alert_meta.setProperty("alert_count", total)
+        self.alert_meta.setProperty("alert_summary", summary)
+        self.alert_meta.setText(summary)
 
-        if not alerts:
+        if not alert_rows:
             empty = QLabel("No alerts")
             empty.setStyleSheet(f"color:{MUTED}; font-size:12px; padding:24px;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.alert_layout.addWidget(empty)
         else:
-            for a in alerts:
+            for a in alert_rows:
                 self.alert_layout.addWidget(self._alert_item(a))
 
         self.alert_layout.addStretch()
