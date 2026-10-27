@@ -308,6 +308,13 @@ matching the tiered architecture (Presentation ↔ Authentication ↔ Logic ↔ 
 the design chapter. The Flask backend exposes the API used by the desktop client; there is no
 browser UI.
 
+**Still simplified vs. the full Chapter 3 design** (tracked as remaining work):
+- Session-based auth is used instead of JWT (reasonable for a server-rendered/local desktop
+  client; JWT is more suited to the Edge Inference Engine's API-facing needs)
+- SQLCipher is optional because compatible builds vary by platform; SQLite remains the development fallback
+- REST ingestion is available, but provider-specific credentials and mappings are still required
+- No Edge Inference Engine (Raspberry Pi 5 / UAV) integration yet
+
 ## Known limitations / ticket log
 
 - T1: Importing `app.py` calls `ensure_database()` and generates 1,440 demo rows
@@ -315,13 +322,6 @@ browser UI.
   when background simulation is disabled.
 - T3: CI's mutation check explicitly excludes `database.db`
   (`scripts/run_tests_ci.py:15, 39–44`), so it does not detect tests that modify it.
-
-**Still simplified vs. the full Chapter 3 design** (tracked as remaining work):
-- Session-based auth is used instead of JWT (reasonable for a server-rendered/local desktop
-  client; JWT is more suited to the Edge Inference Engine's API-facing needs)
-- SQLCipher is optional because compatible builds vary by platform; SQLite remains the development fallback
-- REST ingestion is available, but provider-specific credentials and mappings are still required
-- No Edge Inference Engine (Raspberry Pi 5 / UAV) integration yet
 
 ---
 
