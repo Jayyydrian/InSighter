@@ -154,7 +154,7 @@ class DemoAccountsTest(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
-    def test_old_schema_migration_keeps_existing_is_active_deactivation(self):
+    def test_old_schema_migration_preserves_existing_users_as_active(self):
         path = self._create_pre_migration_database(include_is_active=False)
         previous_database_path = database.DB_PATH
         database.DB_PATH = path
@@ -174,7 +174,7 @@ class DemoAccountsTest(unittest.TestCase):
 
             self.assertIn("is_active", columns)
             self.assertIn("is_demo", columns)
-            self.assertEqual(tuple(user), (0, 0))
+            self.assertEqual(tuple(user), (1, 0))
         finally:
             database.DB_PATH = previous_database_path
             if os.path.exists(path):

@@ -214,7 +214,6 @@ def init_users_table():
     user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "is_active" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
-        conn.execute("UPDATE users SET is_active = 0")
     if "is_demo" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
     conn.execute("""

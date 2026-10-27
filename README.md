@@ -147,6 +147,17 @@ python scripts/demo_accounts.py remove
 Accounts provisioned this way are marked in the database, so removal will not delete
 an ordinary account that happens to use one of the same usernames.
 
+### Recovering accounts from an older database
+
+Back up the database before migration or recovery. To inspect account status without
+password hashes, run `python scripts/reactivate_accounts.py list --db <database-path>`.
+To reactivate only selected existing accounts, run
+`python scripts/reactivate_accounts.py reactivate <username> [<username> ...] --db <database-path>`.
+The recovery command creates a timestamped backup and audit entry before changing status.
+It does not reset passwords; legacy bcrypt hashes from older databases are unsupported
+by the current verifier, so those accounts still need a separately managed password
+reset or re-provisioning before sign-in.
+
 Production environment checklist:
 
 - Set `INSIGHTER_SECRET_KEY` to a stable, high-entropy secret from a secret manager.
