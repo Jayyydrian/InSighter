@@ -6,7 +6,7 @@ from contextlib import closing
 import pandas as pd
 
 import database
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 isolate_database()
 
@@ -92,9 +92,12 @@ class SectorDeploymentTest(unittest.TestCase):
         self._set_sector("uav_disaster_response")
 
         client = app.test_client()
-        with client.session_transaction() as session:
-            session["username"] = "admin"
-            session["role"] = "admin"
+        password = "sector-admin-test-password"
+        create_test_user("sector-admin", password, "admin")
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        client.post("/login", data={
+            "username": "sector-admin", "password": password, "_csrf_token": csrf,
+        })
         response = client.get("/api/scores")
 
         self.assertEqual(response.status_code, 200)

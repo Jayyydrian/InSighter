@@ -8,7 +8,7 @@ from flask import session
 
 os.environ.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")
 
-from test_support import isolate_database
+from test_support import create_test_user, isolate_database
 
 isolate_database()
 
@@ -233,7 +233,9 @@ class LlmPerformanceTest(unittest.TestCase):
             "explanation": "A grounded explanation.", "recommendation": "Review the alert.",
         }
         with app.app.test_request_context("/api/alerts/42/explain", method="POST"):
-            session["username"] = "admin"
+            user_id = create_test_user("performance-admin", "performance-test-password", "admin")
+            session["user_id"] = user_id
+            session["username"] = "performance-admin"
             session["role"] = "admin"
             with patch("app.get_recent_alerts", return_value=[SAMPLE_ALERT]), \
                     patch("app.get_active_sector", return_value="private_school"), \

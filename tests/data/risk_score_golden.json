@@ -1,0 +1,100 @@
+{
+  "source_commit": "de94a6c0c3b6d72d9e4c5a1334a61e274edd16ec",
+  "generator_seed": 42,
+  "sectors": {
+    "private_school": [
+      {
+        "user": "intern_01",
+        "risk_score": 46.0,
+        "risk_level": "HIGH"
+      },
+      {
+        "user": "it_staff_02",
+        "risk_score": 45.9,
+        "risk_level": "HIGH"
+      },
+      {
+        "user": "researcher_03",
+        "risk_score": 44.8,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "it_staff_01",
+        "risk_score": 44.3,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "admin_staff_02",
+        "risk_score": 41.5,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "intern_03",
+        "risk_score": 41.0,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "researcher_05",
+        "risk_score": 40.1,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "intern_02",
+        "risk_score": 39.9,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "researcher_01",
+        "risk_score": 39.5,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "admin_staff_01",
+        "risk_score": 38.8,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "researcher_02",
+        "risk_score": 37.9,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "researcher_04",
+        "risk_score": 36.4,
+        "risk_level": "MEDIUM"
+      }
+    ],
+    "uav_disaster_response": [
+      {
+        "user": "drone_operator_01",
+        "risk_score": 44.6,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "drone_operator_04",
+        "risk_score": 43.5,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "drone_operator_06",
+        "risk_score": 42.6,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "drone_operator_05",
+        "risk_score": 41.3,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "drone_operator_03",
+        "risk_score": 41.0,
+        "risk_level": "MEDIUM"
+      },
+      {
+        "user": "drone_operator_02",
+        "risk_score": 40.7,
+        "risk_level": "MEDIUM"
+      }
+    ]
+  }
+}

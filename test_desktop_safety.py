@@ -15,6 +15,7 @@ from desktop_app.connection_state import CONNECTED, OFFLINE, ConnectionMonitor
 from desktop_app.dashboard_tab import DashboardTab, risk_level_for, score_color
 from desktop_app.main import InSighterApp
 from desktop_app.profiles_tab import ProfilesTab
+from desktop_app.risk import risk_color_for_level
 from desktop_app.safe_text import plain_label
 from desktop_app import server_launcher
 from desktop_app.theme import BG, GridBackground, InsetShadowFrame, QSS
@@ -139,9 +140,17 @@ class DesktopSafetyTest(unittest.TestCase):
         self.assertEqual(score_color(65, 65, 40), "#ef4444")
         self.assertEqual(score_color(40, 65, 40), "#f59e0b")
         self.assertEqual(score_color(39, 65, 40), "#10b981")
+
+    def test_dashboard_risk_colors_follow_server_levels(self):
+        self.assertEqual(risk_level_for(50, 50, 40), "HIGH")
+        self.assertEqual(risk_level_for(40, 50, 40), "MEDIUM")
+        self.assertEqual(risk_level_for(39.9, 50, 40), "LOW")
+        self.assertEqual(risk_color_for_level("HIGH"), "#ef4444")
+        self.assertEqual(risk_color_for_level("MEDIUM"), "#f59e0b")
+        self.assertEqual(risk_color_for_level("LOW"), "#10b981")
+
     def test_dashboard_counts_and_badges_keep_server_risk_level(self):
         tab = DashboardTab(object())
-        tab.set_thresholds(70, 55)
         tab._refresh_scores([{
             "user": "operator",
             "role": "drone_operator",
@@ -162,9 +171,9 @@ class DesktopSafetyTest(unittest.TestCase):
         badge_widget = tab.table.cellWidget(0, 4)
         self.assertEqual(badge_widget.findChild(QLabel).text(), "HIGH")
         score_widget = tab.table.cellWidget(0, 3)
-        self.assertIn("#f59e0b", score_widget.findChildren(QLabel)[0].styleSheet())
+        self.assertIn("#ef4444", score_widget.findChildren(QLabel)[0].styleSheet())
         self.assertEqual(tab.card_top.value_label.text(), "60%")
-        self.assertEqual(tab.history["operator"], [60.0])
+        self.assertEqual(tab.history["operator"], [(60.0, "HIGH")])
 
     def test_total_risk_shows_top_user_score_and_empty_values_are_zero(self):
         tab = DashboardTab(object())
@@ -238,7 +247,7 @@ class DesktopSafetyTest(unittest.TestCase):
             ],
             [
                 "User", "IF score", "SVM score", "Risk score", "Level",
-                "Files / event", "Data / event", "Off-hours",
+                "Files / event", "Data / event", "Off-hours", "Trend",
             ],
         )
         self.assertEqual(tab.table.item(0, 1).text(), "70.0")

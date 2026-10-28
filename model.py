@@ -13,6 +13,7 @@ from role_baseline import (
     get_effective_role_baselines,
 )
 from database import connect
+from risk_thresholds import get_thresholds, risk_level_for
 from sector_config import DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster
 from simulation import activity_values
 
@@ -157,12 +158,9 @@ def score_users():
     summary["risk_score"]  = summary["risk_score"].round(1)
     summary["if_score"]    = summary["if_score"].round(1)
     summary["ocsvm_score"] = summary["ocsvm_score"].round(1)
+    threshold_high, threshold_medium = get_thresholds()
     summary["risk_level"] = summary["risk_score"].apply(
-        lambda value: (
-            "HIGH" if value >= threshold_high
-            else "MEDIUM" if value >= threshold_medium
-            else "LOW"
-        )
+        lambda score: risk_level_for(score, threshold_high, threshold_medium)
     )
     summary["avg_files"]         = summary["avg_files"].round(1)
     summary["avg_transfer"]      = summary["avg_transfer"].round(1)
@@ -183,7 +181,22 @@ def get_learned_role_baselines(events):
     return calculate_role_baselines(_run_ensemble(events.copy()))
 
 
-def get_recent_alerts():
+def order_alerts(alerts, sort="priority"):
+    if sort == "newest":
+        return sorted(alerts, key=lambda alert: int(alert["id"]), reverse=True)
+
+    severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
+    return sorted(
+        alerts,
+        key=lambda alert: (
+            severity_rank.get(alert["severity"], len(severity_rank)),
+            -float(alert["final_score"]),
+            -int(alert["id"]),
+        ),
+    )
+
+
+def get_recent_alerts(limit=25, offset=0, sort="priority"):
     sector = get_active_sector() or DEFAULT_SECTOR
     sector_config = get_sector_config(sector)
     allowed_roles = set(sector_config["roles"])
@@ -237,13 +250,16 @@ def get_recent_alerts():
         return "IF"
 
     alerts["flagged_by"]  = alerts.apply(flagged_by, axis=1)
-    alerts["if_score"]    = alerts["if_score"].round(1)
-    alerts["ocsvm_score"] = alerts["ocsvm_score"].round(1)
-    alerts["final_score"] = alerts["final_score"].round(1)
+    records = alerts[["id","user","role","login_hour","off_hours_access","data_category","files_accessed","data_transferred_mb",
+                      "failed_logins","description","severity",
+                      "flagged_by","if_score","ocsvm_score","final_score"]].to_dict(orient="records")
+    records = order_alerts(records, sort)
+    for alert in records:
+        alert["if_score"] = round(alert["if_score"], 1)
+        alert["ocsvm_score"] = round(alert["ocsvm_score"], 1)
+        alert["final_score"] = round(alert["final_score"], 1)
 
-    return alerts[["id","user","role","login_hour","off_hours_access","data_category","files_accessed","data_transferred_mb",
-                   "failed_logins","description","severity",
-                   "flagged_by","if_score","ocsvm_score","final_score"]].head(25).to_dict(orient="records")
+    return records[offset:] if limit is None else records[offset:offset + limit]
 
 
 def _live_simulation_roster(conn, sector):

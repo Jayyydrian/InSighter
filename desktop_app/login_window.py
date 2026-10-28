@@ -52,7 +52,6 @@ class LoginWindow(GridBackground):
 
         card_layout.addWidget(self._field_label("Username"))
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("admin")
         card_layout.addWidget(self.username_input)
 
         card_layout.addWidget(self._field_label("Password"))

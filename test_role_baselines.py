@@ -9,7 +9,7 @@ import pandas as pd
 import database
 import model
 import role_baseline
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 isolate_database()
 os.environ.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")
@@ -358,10 +358,26 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
 
     def admin_client(self, role="admin"):
         client = app.test_client()
-        with client.session_transaction() as session:
-            session["username"] = "baseline-admin" if role == "admin" else "test-user"
-            session["role"] = role
+        username = "baseline-admin" if role == "admin" else "test-user"
+        password = "baseline-test-password-long"
+        create_test_user(username, password, role)
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        client.post("/login", data={
+            "username": username, "password": password, "_csrf_token": csrf,
+        })
+        self._add_csrf_to_writes(client)
         return client
+
+    @staticmethod
+    def _add_csrf_to_writes(client):
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        original_put, original_post = client.put, client.post
+        client.put = lambda *args, **kwargs: original_put(
+            *args, headers={**kwargs.pop("headers", {}), "X-CSRF-Token": csrf}, **kwargs
+        )
+        client.post = lambda *args, **kwargs: original_post(
+            *args, headers={**kwargs.pop("headers", {}), "X-CSRF-Token": csrf}, **kwargs
+        )
 
     def complete_values(self, client):
         items = client.get("/api/baseline-setup").get_json()["items"]
@@ -396,9 +412,14 @@ class RoleBaselineApiTest(unittest.TestCase):
 
     def admin_client(self, role="admin"):
         client = app.test_client()
-        with client.session_transaction() as session:
-            session["username"] = "baseline-admin" if role == "admin" else "test-user"
-            session["role"] = role
+        username = "baseline-admin" if role == "admin" else "test-user"
+        password = "baseline-test-password-long"
+        create_test_user(username, password, role)
+        csrf = client.get("/api/csrf-token").get_json()["csrf_token"]
+        client.post("/login", data={
+            "username": username, "password": password, "_csrf_token": csrf,
+        })
+        RoleBaselineStorageAndScoringTest._add_csrf_to_writes(client)
         return client
 
     def complete_values(self, client):

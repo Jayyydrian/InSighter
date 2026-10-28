@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 
 import requests
 
-from test_support import isolate_database, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
 
 DB_PATH = temporary_database_path()
 os.environ["INSIGHTER_DB_PATH"] = DB_PATH
@@ -758,7 +758,9 @@ class ExplainAlertRouteTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.original_alerts = app.get_recent_alerts
-        app.get_recent_alerts = lambda: [SAMPLE_ALERT]
+        app.get_recent_alerts = lambda **kwargs: [SAMPLE_ALERT]
+        create_test_user("llm-root", "llm-root-test-password", "admin")
+        create_test_user("llm-auditor", "llm-auditor-test-password", "compliance")
 
     @classmethod
     def tearDownClass(cls):
@@ -772,40 +774,49 @@ class ExplainAlertRouteTest(unittest.TestCase):
 
     def _login(self, username, password):
         client = app.app.test_client()
-        client.post("/login", data={"username": username, "password": password})
+        token = client.get("/api/csrf-token").get_json()["csrf_token"]
+        client.post("/login", data={
+            "username": username, "password": password, "_csrf_token": token,
+        })
+        client._test_csrf_token = client.get("/api/csrf-token").get_json()["csrf_token"]
         return client
 
+    @staticmethod
+    def _post(client, path):
+        return client.post(path, headers={"X-CSRF-Token": client._test_csrf_token})
+
     def test_requires_admin(self):
-        client = self._login("hr_officer", "hr_officer123")
-        r = client.post("/api/alerts/42/explain")
+        client = self._login("llm-auditor", "llm-auditor-test-password")
+        r = self._post(client, "/api/alerts/42/explain")
+        self.assertEqual(r.status_code, 403)
         self.assertNotEqual(r.status_code, 200)
 
     def test_unknown_alert_id_returns_404(self):
-        client = self._login("admin", "admin123")
-        r = client.post("/api/alerts/999999/explain")
+        client = self._login("llm-root", "llm-root-test-password")
+        r = self._post(client, "/api/alerts/999999/explain")
         self.assertEqual(r.status_code, 404)
 
     def test_success_is_cached_after_first_call(self):
-        client = self._login("admin", "admin123")
+        client = self._login("llm-root", "llm-root-test-password")
         with patch("app.explain_alert", return_value={
             "available": True, "reason": None,
             "explanation": "e", "recommendation": "r",
         }) as mocked:
-            r1 = client.post("/api/alerts/42/explain")
-            r2 = client.post("/api/alerts/42/explain")
+            r1 = self._post(client, "/api/alerts/42/explain")
+            r2 = self._post(client, "/api/alerts/42/explain")
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r1.get_json()["explanation"], "e")
         self.assertEqual(r2.get_json()["explanation"], "e")
         mocked.assert_called_once()  # second call served from cache, not re-queried
 
     def test_unavailable_result_is_not_cached(self):
-        client = self._login("admin", "admin123")
+        client = self._login("llm-root", "llm-root-test-password")
         with patch("app.explain_alert", return_value={
             "available": False, "reason": "Ollama not running at http://localhost:11434",
             "explanation": None, "recommendation": None,
         }) as mocked:
-            client.post("/api/alerts/42/explain")
-            client.post("/api/alerts/42/explain")
+            self._post(client, "/api/alerts/42/explain")
+            self._post(client, "/api/alerts/42/explain")
         self.assertEqual(mocked.call_count, 2)  # retried both times, not cached as a permanent failure
 
 

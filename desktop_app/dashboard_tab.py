@@ -22,10 +22,12 @@ from PyQt6 import sip
 import zlib
 
 from desktop_app.async_utils import run_async
+from desktop_app.risk import risk_color_for_level
 from desktop_app.safe_text import plain_label
 from desktop_app.theme import (
     BORDER, BORDER2, MUTED, MUTED2, TEXT, InsetShadowFrame,
 )
+from risk_thresholds import risk_level_for as shared_risk_level_for
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,7 @@ DEFAULT_THRESHOLD_MEDIUM = 30
 
 def risk_level_for(score, threshold_high=DEFAULT_THRESHOLD_HIGH,
                   threshold_medium=DEFAULT_THRESHOLD_MEDIUM):
-    if score >= threshold_high:
-        return "HIGH"
-    if score >= threshold_medium:
-        return "MEDIUM"
-    return "LOW"
+    return shared_risk_level_for(score, threshold_high, threshold_medium)
 
 
 def avatar_color(username):
@@ -666,10 +664,10 @@ class DashboardTab(QWidget):
         self.matrix_filter_layout.addWidget(self.matrix_risk_filter)
         panel.content_layout.addWidget(filter_container)
 
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
             ["User", "IF score", "SVM score", "Risk score", "Level",
-             "Files / event", "Data / event", "Off-hours"]
+             "Files / event", "Data / event", "Off-hours", "Trend"]
         )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -684,10 +682,12 @@ class DashboardTab(QWidget):
             "User and assigned role.",
             "Isolation Forest anomaly score (0-100). Higher values indicate more unusual activity.",
             "One-Class SVM anomaly score (0-100). Higher values indicate more unusual activity.",
-            "Combined risk score and level.",
+            "Combined risk score.",
+            "Server-assigned risk level.",
             "Average files accessed per recorded activity event.",
             "Average data transferred per recorded activity event, in megabytes (MB).",
             "Total recorded activity events outside usual hours.",
+            "Recent risk scores, colored by server-assigned risk level.",
         )):
             header_item = self.table.horizontalHeaderItem(column)
             header_item.setToolTip(tooltip)
@@ -764,17 +764,14 @@ class DashboardTab(QWidget):
 
     # -- Data refresh -------------------------------------------------------
     def refresh(self):
-        fetch_thresholds = time.monotonic() - self._thresholds_fetched_at >= 30
-
         def fetch():
-            results = {}
             requests = [
                 ("scores", self.client.get_scores),
                 ("alerts", self.client.get_alerts),
                 ("resources", self.client.get_resources),
+                ("thresholds", self.client.get_uav_config),
             ]
-            if fetch_thresholds:
-                requests.append(("thresholds", self.client.get_uav_config))
+            results = {}
             for name, method in requests:
                 try:
                     results[name] = method()
@@ -814,6 +811,7 @@ class DashboardTab(QWidget):
             ("scores", self._refresh_scores),
             ("alerts", self._refresh_alerts),
             ("resources", self._refresh_runtime_status),
+            ("thresholds", self._apply_thresholds),
         ):
             result = results[name]
             if isinstance(result, Exception):
@@ -821,10 +819,6 @@ class DashboardTab(QWidget):
                     self._show_summary_status("Unavailable", "Could not load risk data")
                 continue
             method(result)
-        if "thresholds" in results:
-            config = results["thresholds"]
-            if not isinstance(config, Exception):
-                self._apply_thresholds(config)
         monitor = getattr(self.client, "connection_monitor", None)
         failures = [value for value in results.values() if isinstance(value, Exception)]
         if monitor is not None:
@@ -928,7 +922,7 @@ class DashboardTab(QWidget):
             f"Top risk score · {top['user']}" if top else "No users monitored"
         )
         self.card_top.sub_label.setStyleSheet(
-            f"color:{score_color(top['risk_score'], self.threshold_high, self.threshold_medium) if top else MUTED}; "
+            f"color:{risk_color_for_level(top['risk_level']) if top else MUTED}; "
             "border:none;"
         )
         for level, card in (
@@ -942,9 +936,10 @@ class DashboardTab(QWidget):
         self._render_matrix()
         for user in normalized_users:
             history = self.history.setdefault(user["user"], [])
-            history.append(float(user["risk_score"]))
+            history.append((float(user["risk_score"]), user["risk_level"]))
             if len(history) > HISTORY_MAX:
                 del history[0]
+        self._update_sparklines()
 
     def _render_matrix(self, *_args):
         if not hasattr(self, "matrix_risk_filter") or not hasattr(self, "table"):
@@ -954,6 +949,7 @@ class DashboardTab(QWidget):
             user for user in self.last_users
             if selected_level is None or user.get("risk_level") == selected_level
         ]
+        self._sparkline_rows = {}
         self.matrix_meta.setText(f"Showing {len(users)} of {len(self.last_users)} users")
         self.table.setRowCount(len(users))
         for row, user in enumerate(users):
@@ -966,7 +962,9 @@ class DashboardTab(QWidget):
                 item.setForeground(QColor(MUTED2))
                 self.table.setItem(row, column, item)
             self.table.setCellWidget(
-                row, 3, self._score_bar_cell(float(user["risk_score"]))
+                row, 3, self._score_bar_cell(
+                    float(user["risk_score"]), user["risk_level"]
+                )
             )
             self.table.setCellWidget(row, 4, self._badge_cell(user["risk_level"]))
             for column, key in (
@@ -980,8 +978,68 @@ class DashboardTab(QWidget):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setForeground(QColor(MUTED2))
                 self.table.setItem(row, column, item)
+            self.table.setCellWidget(row, 8, self._sparkline_cell(user["user"]))
         for row in range(len(users)):
             self.table.setRowHeight(row, 42)
+        self._update_sparklines()
+
+    def _sparkline_cell(self, username):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        bars_holder = QWidget()
+        bars_holder.setFixedHeight(28)
+        bars_layout = QHBoxLayout(bars_holder)
+        bars_layout.setContentsMargins(0, 0, 0, 0)
+        bars_layout.setSpacing(2)
+        value_label = plain_label("-")
+        value_label.setFixedWidth(42)
+        value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        value_label.setStyleSheet(
+            f"color:{TEXT}; font-size:10px; font-family:Consolas,monospace;"
+        )
+        layout.addWidget(bars_holder, stretch=1)
+        layout.addWidget(value_label)
+        self._sparkline_rows[username] = (bars_layout, value_label)
+        return widget
+
+    def _update_sparklines(self):
+        for username, (bars_layout, value_label) in self._sparkline_rows.items():
+            while bars_layout.count():
+                item = bars_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+            history = self.history.get(username, [])
+            max_score = max((score for score, _level in history), default=1) or 1
+            for score, level in history:
+                bar = QFrame()
+                bar.setFixedHeight(max(2, round(score / max_score * 24)))
+                bar.setMinimumWidth(3)
+                bar.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    QSizePolicy.Policy.Fixed,
+                )
+                bar.setStyleSheet(
+                    f"background:{risk_color_for_level(level)}; border-radius:2px;"
+                )
+                bars_layout.addWidget(
+                    bar, alignment=Qt.AlignmentFlag.AlignBottom
+                )
+            bars_layout.addStretch()
+
+            if history:
+                score, level = history[-1]
+                value_label.setText(f"{score:.1f}%")
+                color = risk_color_for_level(level)
+            else:
+                value_label.setText("-")
+                color = TEXT
+            value_label.setStyleSheet(
+                f"color:{color}; font-size:10px; font-family:Consolas,monospace;"
+            )
 
     @staticmethod
     def _format_matrix_value(value, suffix="", precision=1):
@@ -1019,14 +1077,14 @@ class DashboardTab(QWidget):
         h.addStretch()
         return w
 
-    def _score_bar_cell(self, score):
+    def _score_bar_cell(self, score, risk_level):
         w = QWidget()
         w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
         h.setSpacing(8)
 
-        color = score_color(score, self.threshold_high, self.threshold_medium)
+        color = risk_color_for_level(risk_level)
         track = QFrame()
         track.setFixedSize(70, 4)
         track.setStyleSheet(f"background:{BORDER2}; border-radius:2px;")
@@ -1053,7 +1111,7 @@ class DashboardTab(QWidget):
         w.setStyleSheet("background:transparent;")
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 4, 8, 4)
-        color = RISK_COLORS.get(level, TEXT)
+        color = risk_color_for_level(level)
         badge = plain_label(level)
         badge.setStyleSheet(
             f"color:{color}; border:1px solid {color}; border-radius:4px; "

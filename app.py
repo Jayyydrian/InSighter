@@ -2,19 +2,27 @@ import logging
 import math
 import re
 
-from flask import Flask, render_template, jsonify, request, redirect, url_for, session
+from flask import Flask, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
 from model import get_learned_role_baselines, score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from llm_advisor import explain_alert, warm_up_model
+from llm_advisor import (
+    check_ollama_reachability,
+    explain_alert,
+    get_llm_runtime_stats,
+    set_warmup_state,
+    warm_up_model,
+)
 from role_baseline import ROLE_BASELINE_FEATURES, build_role_baseline_features
 from auth import (
     admin_required,
     compliance_required,
+    DatabaseSessionInterface,
     init_users_table,
     login_required,
     log_action,
     authenticate_login,
+    rotate_session,
 )
 from ingestion import (
     active_directory_status,
@@ -26,12 +34,18 @@ from database import Row, connect, ensure_database
 from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
 from sector_config import DEFAULT_SECTOR, SECTORS, get_active_sector, get_sector_config, monitoring_scope as calculate_monitoring_scope
+from risk_thresholds import get_thresholds, validate_thresholds
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY", secrets.token_hex(32))
+app.secret_key = os.environ.get("INSIGHTER_SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("Set INSIGHTER_SECRET_KEY to a stable, randomly generated secret")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("INSIGHTER_COOKIE_SECURE", "1") == "1"
+app.session_interface = DatabaseSessionInterface()
 # Lets desktop_app/server_launcher.py tell a genuinely-fresh backend process apart
 # from a stale one left running from before app.py was last edited on disk, instead
 # of silently reusing whatever already answers on the port (see /api/_backend-info).
@@ -86,31 +100,62 @@ def backend_info():
     return jsonify({"pid": os.getpid(), "app_mtime": _APP_FILE_MTIME})
 
 
+@app.before_request
+def enforce_csrf():
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    expected = session.get("csrf_token")
+    supplied = request.headers.get("X-CSRF-Token") or request.form.get("_csrf_token")
+    if not expected or not supplied or not secrets.compare_digest(expected, supplied):
+        return jsonify({"error": "CSRF validation failed."}), 400
+    return None
+
+
+@app.route("/api/csrf-token")
+def csrf_token():
+    session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return jsonify({"csrf_token": session["csrf_token"]})
+
+
 # ── Auth routes ──────────────────────────────────────────────────────────────
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if request.method == "GET":
+        session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        return jsonify({"message": "Sign in through the InSighter desktop application."})
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         role, retry_after = authenticate_login(username, password)
         if role:
-            session["username"] = username
-            session["role"] = role
-            log_action(username, "LOGIN_SUCCESS", f"role={role}")
-            next_url = request.args.get("next") or url_for("dashboard")
-            return redirect(next_url)
+            session.clear()
+            rotate_session()
+            session["user_id"] = role["id"]
+            session["username"] = role["username"]
+            session["role"] = role["role"]
+            session["csrf_token"] = secrets.token_urlsafe(32)
+            log_action(username, "LOGIN_SUCCESS", f"role={role['role']}")
+            next_url = request.args.get("next") or "/"
+            return redirect(_safe_local_redirect(next_url))
         if retry_after:
             log_action(username or "(blank)", "LOGIN_COOLDOWN", "too many failed attempts")
-            return render_template(
-                "login.html",
-                error=f"Too many unsuccessful sign-in attempts. Try again in about {retry_after} seconds.",
-            ), 429
+            return jsonify({"error": "Invalid username or password."}), 401
         log_action(username or "(blank)", "LOGIN_FAILED", "invalid credentials")
-        return render_template("login.html", error="Invalid username or password."), 401
-    return render_template("login.html", error=None)
+        return jsonify({"error": "Invalid username or password."}), 401
 
 
-@app.route("/logout")
+def _safe_local_redirect(target):
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(target or "")
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return "/"
+    if parsed.path.startswith("//") or "\\" in target:
+        return "/"
+    return target
+
+
+@app.route("/logout", methods=["POST"])
 def logout():
     if "username" in session:
         log_action(session["username"], "LOGOUT", "")
@@ -119,30 +164,47 @@ def logout():
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
-@app.route("/")
-@login_required
-def dashboard():
-    if session.get("role") == "admin":
-        return render_template("dashboard.html")
-
-    # management role: aggregate-only summary view, no individual user data
-    users = score_users()
-    counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
-    for u in users:
-        counts[u["risk_level"]] = counts.get(u["risk_level"], 0) + 1
-    return render_template(
-        "summary.html",
-        username=session.get("username"),
-        role=session.get("role"),
-        high_count=counts["HIGH"],
-        medium_count=counts["MEDIUM"],
-        low_count=counts["LOW"],
-    )
-
 @app.route("/api/scores")
 @admin_required
 def scores():
     return jsonify(score_users())
+
+
+def _alert_page_options():
+    raw_limit = request.args.get("limit", "25")
+    raw_offset = request.args.get("offset", "0")
+    sort = request.args.get("sort", "priority")
+    if not re.fullmatch(r"[0-9]+", raw_limit, flags=re.ASCII):
+        raise ValueError("limit must be an integer between 1 and 200.")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be an integer between 1 and 200.")
+    if not re.fullmatch(r"[0-9]+", raw_offset, flags=re.ASCII):
+        raise ValueError("offset must be a non-negative integer.")
+    offset = int(raw_offset)
+    if sort not in {"priority", "newest"}:
+        raise ValueError("sort must be 'priority' or 'newest'.")
+    return limit, offset, sort
+
+
+def _paginated_alert_response(compliance=False):
+    try:
+        limit, offset, sort = _alert_page_options()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    alerts = get_recent_alerts(limit=None, sort=sort)
+    total = len(alerts)
+    page = alerts[offset:offset + limit]
+    if compliance:
+        page = [
+            {**alert, "user": hash_identifier(alert["user"])}
+            for alert in page
+        ]
+    response = jsonify(page)
+    response.headers["X-Total-Flagged"] = str(total)
+    response.headers["X-Returned"] = str(len(page))
+    return response
 
 
 @app.route("/api/user-history")
@@ -171,7 +233,7 @@ def user_history():
 @app.route("/api/alerts")
 @admin_required
 def alerts():
-    return jsonify(get_recent_alerts())
+    return _paginated_alert_response()
 
 
 # In-memory cache for AI explanations, keyed by alert (log) id -- the underlying
@@ -312,7 +374,7 @@ def explain_alert_route(alert_id):
     if cached is not None:
         return jsonify(cached)
 
-    alert = next((a for a in get_recent_alerts() if a["id"] == alert_id), None)
+    alert = next((a for a in get_recent_alerts(limit=None) if a["id"] == alert_id), None)
     if alert is None:
         return jsonify({"error": "Alert not found (it may have scrolled out of the recent window)."}), 404
 
@@ -489,10 +551,7 @@ def baseline_setup_reset():
 @compliance_required
 def compliance_alerts():
     """Return flagged incidents with stable pseudonymous user identifiers."""
-    return jsonify([
-        {**alert, "user": hash_identifier(alert["user"])}
-        for alert in get_recent_alerts()
-    ])
+    return _paginated_alert_response(compliance=True)
 
 @app.route("/api/sessions")
 @admin_required
@@ -506,7 +565,7 @@ def sessions():
     conn.close()
     return jsonify([dict(r) for r in rows])
 
-@app.route("/api/reseed")
+@app.route("/api/reseed", methods=["POST"])
 @admin_required
 def reseed():
     generate()
@@ -519,7 +578,7 @@ def reseed():
     log_action(session.get("username"), "DATA_RESEEDED", "synthetic log data regenerated")
     return jsonify({"status": "reseeded"})
 
-@app.route("/api/simulate")
+@app.route("/api/simulate", methods=["POST"])
 @admin_required
 def simulate():
     simulation_event = _run_simulation_tick()
@@ -579,12 +638,19 @@ def _start_llm_warmup():
         os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") == "1"
         or os.environ.get("INSIGHTER_LLM_WARMUP", "1") == "0"
     ):
+        set_warmup_state("disabled")
         return None
+
+    set_warmup_state("starting")
     worker = threading.Thread(
-        target=warm_up_model, name="insighter-llm-warmup", daemon=True
+        target=_run_llm_warmup, name="insighter-llm-warmup", daemon=True
     )
     worker.start()
     return worker
+
+
+def _run_llm_warmup():
+    set_warmup_state("ready" if warm_up_model() else "failed")
 
 
 if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
@@ -623,6 +689,7 @@ def _deployment_config_payload():
     keys = ["sector", "threshold_high", "threshold_medium", "log_targets",
             "sync_interval_minutes", "drone_operator_username", "updated_at"]
     payload = dict(zip(keys, row))
+    payload["threshold_high"], payload["threshold_medium"] = get_thresholds()
     payload["taxonomy"] = get_sector_config(payload["sector"])
     return payload
 
@@ -637,7 +704,10 @@ def get_uav_config():
 @app.route("/api/uav-config", methods=["POST"])
 @admin_required
 def update_uav_config():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
     # Only change the sector if the caller explicitly included it; otherwise
     # keep whatever is currently configured. Missing keys should not silently
     # revert the deployment to a removed sector.
@@ -645,14 +715,29 @@ def update_uav_config():
         sector = data.get("sector")
         if sector is None:
             sector = get_active_sector() or DEFAULT_SECTOR
-        elif sector not in SECTORS:
+        elif not isinstance(sector, str) or sector not in SECTORS:
             supported = ", ".join(sorted(SECTORS))
             return jsonify({
                 "error": f"Unsupported deployment sector '{sector}'. Supported sectors: {supported}."
             }), 400
     else:
         sector = get_active_sector() or DEFAULT_SECTOR
+
+    if "threshold_high" not in data or "threshold_medium" not in data:
+        return jsonify({
+            "error": "threshold_high and threshold_medium are required."
+        }), 400
+    try:
+        threshold_high, threshold_medium = validate_thresholds(
+            data["threshold_high"], data["threshold_medium"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     conn = connect()
+    old_threshold_high, old_threshold_medium = conn.execute(
+        "SELECT threshold_high, threshold_medium FROM deployment_config WHERE id = 1"
+    ).fetchone()
     conn.execute("""
         UPDATE deployment_config SET
             sector = ?,
@@ -665,17 +750,24 @@ def update_uav_config():
         WHERE id = 1
     """, (
         sector,
-        data.get("threshold_high", 45),
-        data.get("threshold_medium", 30),
+        threshold_high,
+        threshold_medium,
         data.get("log_targets", ""),
         data.get("sync_interval_minutes", 15),
         data.get("drone_operator_username", "drone_operator"),
     ))
+    conn.execute(
+        "INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)",
+        (
+            session.get("username"),
+            "CONFIG_UPDATED",
+            f"sector={sector}, threshold_high={old_threshold_high}->{threshold_high}, "
+            f"threshold_medium={old_threshold_medium}->{threshold_medium}, "
+            f"sync_interval_minutes={data.get('sync_interval_minutes', 15)}",
+        ),
+    )
     conn.commit()
     conn.close()
-    log_action(session.get("username"), "CONFIG_UPDATED",
-               f"sector={sector}, thresholds={data.get('threshold_high')}/{data.get('threshold_medium')}, "
-               f"sync={data.get('sync_interval_minutes')}min")
     return jsonify({"status": "saved"})
 
 
@@ -842,6 +934,14 @@ def resources():
         "events_total":    snap["events_total"],
         "events_per_sec":  snap["events_per_sec"],
     })
+
+
+@app.route("/api/llm-stats")
+@admin_required
+def llm_stats():
+    check_ollama_reachability()
+    return jsonify(get_llm_runtime_stats())
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5051))

@@ -20,11 +20,8 @@ Runs locally in under 2 minutes.
 
 AI-assisted insider threat detection proof-of-concept.
 
-Two ways to run it:
-1. **Desktop app (PyQt6)** — matches Chapter 3's Presentation Tier spec. Recommended.
-2. **Web dashboard (Flask + browser)** — kept for quick testing/demo convenience.
-
-Both talk to the same backend (Logic + Authentication + Data tiers).
+The PyQt6 desktop app is the user interface. It talks over local HTTP to the Flask
+backend, which provides the Logic, Authentication, and Data tiers.
 
 ---
 
@@ -35,10 +32,16 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 - Builds role-aware behavioral baselines and adds baseline deviation to risk scores
 - Varies anomalous and routine activity per live simulation tick; UAV simulation uses mission-appropriate numeric profiles and alert language
 - Accepts protected events from a configured REST API through the desktop Integrations page
-- Hashes identifiers and encrypts non-identity event payloads before storage
+- Stores raw event identifiers in `logs.user` and usernames/audit actors in plaintext;
+  encrypts the non-identity event payload. The compliance view pseudonymizes identifiers
+  in its output; this does not change the raw identifiers retained in storage.
 - Uses SQLCipher encryption automatically when `sqlcipher3` is installed, with SQLite fallback for development
-- Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
-- Displays a live risk dashboard with scores, alerts, recent per-user activity history with UTC timestamps and current risk scores, and a UAV Configuration Module
+- Login + RBAC: `admin` (full access), `compliance` (pseudonymized output), and
+  `management` (summary plus authenticated read access to taxonomy, monitoring scope,
+  integrations, and resources); the latter is broader than summary-only.
+- Displays a live risk dashboard with scores, alerts, user behavior profiles and
+  recent per-user activity history with UTC timestamps and current risk scores, plus
+  a UAV Configuration Module
 
 ## Supported sectors and legacy databases
 
@@ -57,6 +60,20 @@ Benchmark records under `llm_benchmark_review/` are historical artifacts and inc
 SME/startup data; they do not indicate a currently supported sector.
 
 ## Admin role baseline setup
+
+User risk levels (LOW / MEDIUM / HIGH) use the administrator-configured
+`threshold_medium` and `threshold_high` values as the source of truth. New
+databases default to MEDIUM at 30 and HIGH at 45. If stored thresholds are
+missing or invalid, scoring uses those defaults and emits a rate-limited warning.
+Alert event severity (MEDIUM / HIGH / CRITICAL) is separate and continues to use
+the event-level transfer and file cutoffs; changing user risk thresholds does not
+change alert severity.
+
+The checked-in risk-score golden snapshot was generated from base commit
+`de94a6c0c3b6d72d9e4c5a1334a61e274edd16ec`. To intentionally regenerate it from
+a chosen checkout, run
+`python scripts/regenerate_risk_score_golden.py --repo <checkout> --source-commit <commit> --output tests/data/risk_score_golden.json`.
+This command is manual only and is not part of tests or CI.
 
 The admin-only first-run setup lets an administrator declare a center of normal for each role and feature. A sector is either **not configured** (built-in learned defaults are used) or **configured**. Values and setup status are stored per sector and survive log reseeding.
 
@@ -77,14 +94,86 @@ python desktop_app/main.py
 ```
 
 `requirements.txt` installs the backend dependencies; `requirements-desktop.txt` adds
-PyQt6 for the desktop client. The launcher automatically starts the Flask backend in the
-background (port 5051) and opens the login window. Log in with:
+PyQt6 for the desktop client. Before the first start, provision the initial administrator
+through `INSIGHTER_ADMIN_USERNAME` and `INSIGHTER_ADMIN_PASSWORD`. The password must be
+at least 14 characters. The credentials are consumed only when no active administrator
+exists; later starts do not reset an existing account. Supply `INSIGHTER_SECRET_KEY` and
+`INSIGHTER_PII_SECRET` from a secret manager, and set `INSIGHTER_COOKIE_SECURE=1` when
+serving over HTTPS. The desktop launcher uses `INSIGHTER_COOKIE_SECURE=0` only for its
+loopback HTTP backend; do not expose that backend to a network.
 
-| Username | Password    | Role         | Access                          |
-|----------|-------------|--------------|----------------------------------|
-| admin    | admin123    | admin        | Full: dashboard, profiles, alerts, UAV config |
-| manager  | manager123  | management   | Summary counts only              |
-| hr_officer | hr_officer123 | compliance | Flagged records and audit trail with pseudonymous identities |
+The backend uses SQLite-backed opaque sessions with idle and absolute expiry. For a
+multi-instance deployment, place the database on storage with reliable SQLite locking or
+move session storage and login throttling to a shared Redis/database service before
+horizontal scaling. Enable SQLCipher and provide `INSIGHTER_DB_KEY` where database-at-rest
+encryption is required.
+
+When SQLCipher is unavailable, the application uses plaintext SQLite and
+`INSIGHTER_DB_KEY` has no effect; the key does not encrypt that database.
+
+### Desktop startup and local secrets
+
+The desktop launcher reports the selected database path and writes startup diagnostics
+to `backend_startup.log` in the project folder, replacing that log at each start. If
+`INSIGHTER_SECRET_KEY` is unset, it creates a persistent signing key at
+`%USERPROFILE%\.insighter\secret_key`; on Windows, access is restricted to the current
+user. The launcher verifies that the directory is visible outside Python before it
+applies permissions. A user-supplied `INSIGHTER_SECRET_KEY` takes precedence over that
+local file.
+When SQLCipher is installed, set `INSIGHTER_DB_KEY` separately; desktop startup refuses
+to use the signing key as a database key. The generated key is for local desktop use
+only; deployments must set `INSIGHTER_SECRET_KEY` and `INSIGHTER_DB_KEY` themselves.
+Variables set in your shell or Windows environment (for example `INSIGHTER_SECRET_KEY`)
+override the launcher's generated key. Clear the session copy to test a first run.
+
+### Optional Local Demo Accounts
+
+To explicitly create the historical demo accounts in the configured database, run:
+
+```bash
+python scripts/demo_accounts.py create
+```
+
+This creates `admin` / `admin123` (admin), `manager` / `manager123` (management),
+and `hr_officer` / `hr_officer123` (compliance). These published demo credentials
+are intentionally opt-in and must only be used on a local demo instance; do not
+use them on a network-exposed or production system. Creation refuses to overwrite
+any account with one of these usernames.
+
+Remove only accounts created by this command with:
+
+```bash
+python scripts/demo_accounts.py remove
+```
+
+Accounts provisioned this way are marked in the database, so removal will not delete
+an ordinary account that happens to use one of the same usernames.
+
+### Recovering accounts from an older database
+
+Back up the database before migration or recovery. To inspect account status without
+password hashes, run `python scripts/reactivate_accounts.py list --db <database-path>`.
+To reactivate only selected existing accounts, run
+`python scripts/reactivate_accounts.py reactivate <username> [<username> ...] --db <database-path>`.
+The recovery command creates a timestamped backup and audit entry before changing status.
+It does not reset passwords; legacy bcrypt hashes from older databases are unsupported
+by the current verifier, so those accounts still need a separately managed password
+reset or re-provisioning before sign-in.
+
+Production environment checklist:
+
+- Set `INSIGHTER_SECRET_KEY` to a stable, high-entropy secret from a secret manager.
+- Set `INSIGHTER_PII_SECRET` to independent high-entropy key material.
+- On first provisioning only, set `INSIGHTER_ADMIN_USERNAME` and
+  `INSIGHTER_ADMIN_PASSWORD` (minimum 14 characters); remove these variables after
+  the first successful bootstrap.
+- Set `INSIGHTER_COOKIE_SECURE=1` and terminate TLS at a trusted HTTPS endpoint.
+- Provide `INSIGHTER_DB_KEY` when using SQLCipher. Protect SQLite database files and
+  backups with restrictive filesystem permissions and encrypted storage.
+- Use one shared, durable database for sessions and throttle state. SQLite is intended
+  for a single backend process; use a shared transactional store before scaling out.
+- Rotate signing, PII, and database keys under a documented rotation procedure; do not
+  log their values or place them in source control.
 
 ### Local AI Analysis
 
@@ -127,18 +216,12 @@ These two `OLLAMA_*` variables configure the Ollama server, not InSighter. Durin
 The first request after a long idle may take longer while Ollama reloads the model. For
 demos, set `INSIGHTER_LLM_KEEP_ALIVE=2h` to keep it loaded longer.
 
+The Resources tab shows all 14 backend host/process metrics and live local-AI performance
+from real explanation calls, without storing prompts or alert identifiers in its stats.
+Its model benchmark table is historical reference data, not a live measurement.
+No explanation call is made just to populate the panel.
+
 ---
-
-## Quick Start — Web Dashboard (alternative)
-
-```bash
-pip install -r requirements.txt
-python app.py
-```
-Open `http://localhost:5051` and log in with the same accounts above.
-
-The database is auto-seeded on first run.
-Use the **↺ Reseed Data** button to regenerate fresh logs anytime.
 
 ### REST ingestion and protected storage
 
@@ -217,11 +300,6 @@ Insighter/
 ├── model.py                   ← Isolation Forest + One-Class SVM ensemble
 ├── requirements.txt
 ├── database.db                ← SQLite DB (auto-created on first run)
-├── templates/                 ← Web dashboard UI (Flask-rendered)
-│   ├── dashboard.html
-│   ├── login.html
-│   ├── summary.html
-│   └── forbidden.html
 └── desktop_app/                ← PyQt6 Presentation Tier (Chapter 3 spec)
     ├── main.py                ← Entry point
     ├── server_launcher.py     ← Boots the Flask backend as a background thread
@@ -243,10 +321,10 @@ Insighter/
 
 Chapter 3 specifies a **PyQt6 desktop application** as the presentation tier, installed on
 the IT administrator's machine. The desktop app in `desktop_app/` implements this: it is a
-pure UI layer that talks to the Flask backend (`app.py`) over local HTTP (`127.0.0.1:5050`),
+pure UI layer that talks to the Flask backend (`app.py`) over local HTTP (`127.0.0.1:5051`),
 matching the tiered architecture (Presentation ↔ Authentication ↔ Logic ↔ Data) described in
-the design chapter. The Flask web dashboard (`templates/`) is retained separately for quick
-browser-based testing and is not the primary deliverable.
+the design chapter. The Flask backend exposes the API used by the desktop client; there is no
+browser UI.
 
 **Still simplified vs. the full Chapter 3 design** (tracked as remaining work):
 - Session-based auth is used instead of JWT (reasonable for a server-rendered/local desktop
@@ -254,6 +332,14 @@ browser-based testing and is not the primary deliverable.
 - SQLCipher is optional because compatible builds vary by platform; SQLite remains the development fallback
 - REST ingestion is available, but provider-specific credentials and mappings are still required
 - No Edge Inference Engine (Raspberry Pi 5 / UAV) integration yet
+
+## Known limitations / ticket log
+
+- T1: Importing `app.py` calls `ensure_database()` and generates 1,440 demo rows
+  when logs are absent (`app.py:48–57`); this writes to the configured database even
+  when background simulation is disabled.
+- T3: CI's mutation check explicitly excludes `database.db`
+  (`scripts/run_tests_ci.py:15, 39–44`), so it does not detect tests that modify it.
 
 ---
 
@@ -280,4 +366,3 @@ Eve exhibits: off-hours logins, excessive file access, large data transfers, rep
 - **bcrypt** — password hashing
 - **SQLite** — log & user storage
 - **cryptography** — protected event payloads
-- **Vanilla HTML/CSS/JS** — web dashboard alternative (no extra installs)
