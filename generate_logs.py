@@ -33,6 +33,7 @@ def generate():
     users = get_sector_roster(sector)
 
     rng = random.Random(42)
+    event_number = 0
     for _ in range(EVENTS_PER_USER):
         for user, role in users:
             anomalous = rng.random() < 0.045
@@ -42,7 +43,8 @@ def generate():
                 row,
             ))
             event["role"] = role
-            event["data_category"] = categories[-1 if anomalous else 0]
+            event["data_category"] = categories[event_number % len(categories)]
+            event_number += 1
             protected = sanitize_event(event, source="synthetic")
             conn.execute(
                 """INSERT INTO logs
