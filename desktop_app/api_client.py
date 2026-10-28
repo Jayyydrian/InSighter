@@ -151,6 +151,9 @@ class ApiClient:
     def get_resources(self):
         return self._get("/api/resources")
 
+    def get_llm_stats(self):
+        return self._get("/api/llm-stats")
+
     def get_uav_config(self):
         return self._get("/api/uav-config")
 

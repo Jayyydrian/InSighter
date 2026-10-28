@@ -214,6 +214,11 @@ These two `OLLAMA_*` variables configure the Ollama server, not InSighter. Durin
 The first request after a long idle may take longer while Ollama reloads the model. For
 demos, set `INSIGHTER_LLM_KEEP_ALIVE=2h` to keep it loaded longer.
 
+The Resources tab shows all 14 backend host/process metrics and live local-AI performance
+from real explanation calls, without storing prompts or alert identifiers in its stats.
+Its model benchmark table is historical reference data, not a live measurement.
+No explanation call is made just to populate the panel.
+
 ---
 
 ### REST ingestion and protected storage

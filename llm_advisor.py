@@ -16,12 +16,18 @@ Design constraints:
     id, since the underlying log row never changes once written.
 """
 
+import csv
 import json
 import logging
 import os
 import re
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
+from ipaddress import ip_address
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
@@ -46,6 +52,16 @@ WARMUP_TIMEOUT_SECONDS = float(os.environ.get("INSIGHTER_LLM_WARMUP_TIMEOUT", "1
 OLLAMA_CONNECT_TIMEOUT_SECONDS = 3
 
 logger = logging.getLogger(__name__)
+
+_LLM_STATS_LOCK = threading.Lock()
+_LLM_CALLS = deque(maxlen=100)
+_LLM_CALL_COUNT = 0
+_LLM_ERROR_COUNT = 0
+_LLM_TIMEOUT_COUNT = 0
+_LLM_WARMUP_STATE = "not_started"
+_LLM_WARMUP_UPDATED_AT = None
+_OLLAMA_REACHABLE = None
+_OLLAMA_LAST_CHECK_AT = None
 
 ALLOWED_DATA_SOURCES = (
     "the alert's own fields",
@@ -198,6 +214,202 @@ def _unavailable(reason):
     return {"available": False, "reason": reason, "explanation": None, "recommendation": None}
 
 
+def _utc_timestamp():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record_llm_call(
+    *,
+    model,
+    wall_latency_ms,
+    total_duration_ms=None,
+    load_duration_ms=None,
+    prompt_eval_duration_ms=None,
+    eval_duration_ms=None,
+    prompt_eval_count=None,
+    eval_count=None,
+    status,
+    error_type=None,
+):
+    global _LLM_CALL_COUNT, _LLM_ERROR_COUNT, _LLM_TIMEOUT_COUNT
+
+    tokens_per_second = None
+    if (
+        isinstance(eval_count, (int, float))
+        and not isinstance(eval_count, bool)
+        and isinstance(eval_duration_ms, (int, float))
+        and not isinstance(eval_duration_ms, bool)
+        and eval_duration_ms > 0
+    ):
+        tokens_per_second = round(eval_count / (eval_duration_ms / 1000), 2)
+
+    record = {
+        "timestamp": _utc_timestamp(),
+        "model": model,
+        "wall_latency_ms": wall_latency_ms,
+        "total_duration_ms": total_duration_ms,
+        "load_duration_ms": load_duration_ms,
+        "prompt_eval_duration_ms": prompt_eval_duration_ms,
+        "eval_duration_ms": eval_duration_ms,
+        "prompt_eval_count": prompt_eval_count,
+        "eval_count": eval_count,
+        "tokens_per_second": tokens_per_second,
+        "status": status,
+        "error_type": error_type,
+    }
+    with _LLM_STATS_LOCK:
+        _LLM_CALLS.append(record)
+        _LLM_CALL_COUNT += 1
+        if status != "ok":
+            _LLM_ERROR_COUNT += 1
+        if error_type == "Timeout":
+            _LLM_TIMEOUT_COUNT += 1
+
+
+def _clear_llm_stats_for_tests():
+    global _LLM_CALL_COUNT, _LLM_ERROR_COUNT, _LLM_TIMEOUT_COUNT
+    with _LLM_STATS_LOCK:
+        _LLM_CALLS.clear()
+        _LLM_CALL_COUNT = 0
+        _LLM_ERROR_COUNT = 0
+        _LLM_TIMEOUT_COUNT = 0
+
+
+def set_warmup_state(state):
+    global _LLM_WARMUP_STATE, _LLM_WARMUP_UPDATED_AT
+    with _LLM_STATS_LOCK:
+        _LLM_WARMUP_STATE = state
+        _LLM_WARMUP_UPDATED_AT = _utc_timestamp()
+
+
+def check_ollama_reachability():
+    global _OLLAMA_REACHABLE, _OLLAMA_LAST_CHECK_AT
+    reachable = False
+    try:
+        response = requests.get(
+            f"{OLLAMA_HOST.rstrip('/')}/api/tags",
+            timeout=(0.5, 1.0),
+        )
+        response.raise_for_status()
+        reachable = True
+    except requests.RequestException:
+        reachable = False
+
+    with _LLM_STATS_LOCK:
+        _OLLAMA_REACHABLE = reachable
+        _OLLAMA_LAST_CHECK_AT = _utc_timestamp()
+    return reachable
+
+
+def _safe_host_details():
+    try:
+        parsed = urlsplit(OLLAMA_HOST)
+        hostname = parsed.hostname
+        if not hostname:
+            return "Invalid host configuration", "invalid"
+        port = parsed.port
+    except ValueError:
+        return "Invalid host configuration", "invalid"
+
+    try:
+        loopback = hostname.casefold() == "localhost" or hostname.casefold().endswith(
+            ".localhost"
+        )
+        if not loopback:
+            loopback = ip_address(hostname).is_loopback
+    except ValueError:
+        loopback = False
+
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None:
+        display_host = f"{display_host}:{port}"
+    scheme = parsed.scheme or "http"
+    return f"{scheme}://{display_host}", "loopback" if loopback else "remote"
+
+
+def _load_historical_benchmark():
+    path = (
+        Path(__file__).parent
+        / "llm_benchmark_review"
+        / "benchmarks"
+        / "llm_benchmark_summary.csv"
+    )
+    if not path.is_file():
+        return []
+
+    try:
+        with path.open(newline="", encoding="utf-8") as benchmark_file:
+            rows = csv.DictReader(benchmark_file)
+            return [
+                {
+                    "model": row["model"],
+                    "alerts_tested": int(row["alerts_tested"]),
+                    "success_rate_percent": float(row["success_rate_percent"]),
+                    "mean_generation_time_seconds": float(
+                        row["mean_generation_time_seconds"]
+                    ),
+                    "median_generation_time_seconds": float(
+                        row["median_generation_time_seconds"]
+                    ),
+                    "mean_prompt_eval_count": float(row["mean_prompt_eval_count"]),
+                    "mean_eval_count": float(row["mean_eval_count"]),
+                }
+                for row in rows
+            ]
+    except (KeyError, OSError, TypeError, ValueError, csv.Error):
+        logger.warning("Could not read historical LLM benchmark summary at %s", path)
+        return []
+
+
+def get_llm_runtime_stats():
+    with _LLM_STATS_LOCK:
+        calls = list(_LLM_CALLS)
+        call_count = _LLM_CALL_COUNT
+        error_count = _LLM_ERROR_COUNT
+        timeout_count = _LLM_TIMEOUT_COUNT
+        warmup_state = _LLM_WARMUP_STATE
+        warmup_updated_at = _LLM_WARMUP_UPDATED_AT
+        reachable = _OLLAMA_REACHABLE
+        last_check_at = _OLLAMA_LAST_CHECK_AT
+
+    latencies = sorted(
+        call["wall_latency_ms"]
+        for call in calls
+        if isinstance(call["wall_latency_ms"], (int, float))
+    )
+    average = round(sum(latencies) / len(latencies), 2) if latencies else None
+    p95 = (
+        round(latencies[max(0, int(len(latencies) * 0.95 + 0.999999) - 1)], 2)
+        if latencies
+        else None
+    )
+    last_call = calls[-1] if calls else None
+    host_display, host_scope = _safe_host_details()
+    return {
+        "model": OLLAMA_MODEL,
+        "ollama_host": host_display,
+        "host_scope": host_scope,
+        "ollama_reachable": reachable,
+        "last_check_at": last_check_at,
+        "warmup_state": warmup_state,
+        "warmup_updated_at": warmup_updated_at,
+        "call_count": call_count,
+        "retained_calls": len(calls),
+        "last_latency_ms": (
+            last_call["wall_latency_ms"] if last_call is not None else None
+        ),
+        "rolling_average_ms": average,
+        "p95_latency_ms": p95,
+        "error_count": error_count,
+        "timeout_count": timeout_count,
+        "tokens_per_second": (
+            last_call["tokens_per_second"] if last_call is not None else None
+        ),
+        "recent_calls": calls,
+        "benchmark": _load_historical_benchmark(),
+    }
+
+
 def _log_usage(alert, success, payload=None, error_type=None, elapsed_seconds=None):
     """Append usage metrics without allowing logging errors to affect callers."""
     try:
@@ -228,6 +440,28 @@ def _log_usage(alert, success, payload=None, error_type=None, elapsed_seconds=No
             log_file.write(json.dumps(entry) + "\n")
     except Exception as exc:  # pragma: no cover - logging should never break app flow
         logger.warning("Failed to append LLM usage log entry: %s", exc)
+    finally:
+        def duration_ms(field):
+            value = payload.get(field)
+            return round(value / 1_000_000, 3) if isinstance(value, (int, float)) else None
+
+        payload = payload or {}
+        _record_llm_call(
+            model=OLLAMA_MODEL,
+            wall_latency_ms=(
+                round(elapsed_seconds * 1000, 3)
+                if elapsed_seconds is not None
+                else None
+            ),
+            total_duration_ms=duration_ms("total_duration"),
+            load_duration_ms=duration_ms("load_duration"),
+            prompt_eval_duration_ms=duration_ms("prompt_eval_duration"),
+            eval_duration_ms=duration_ms("eval_duration"),
+            prompt_eval_count=payload.get("prompt_eval_count"),
+            eval_count=payload.get("eval_count"),
+            status="ok" if success else "error",
+            error_type=error_type,
+        )
 
 
 def warm_up_model():
