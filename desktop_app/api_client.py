@@ -137,10 +137,9 @@ class ApiClient:
         alerts = self._json(response, "/api/alerts")
         try:
             total = int(response.headers["X-Total-Flagged"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise self._unexpected_response(
-                "The backend returned an invalid alert total."
-            ) from exc
+        except (KeyError, TypeError, ValueError):
+            total = len(alerts)
+        total = max(total, len(alerts))
         return {"alerts": alerts, "total": total}
 
     def explain_alert(self, alert_id):
