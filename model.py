@@ -121,8 +121,17 @@ def score_users():
     sector = get_active_sector() or DEFAULT_SECTOR
     allowed_roles = set(get_sector_config(sector)["roles"])
     conn = connect()
+    threshold_row = conn.execute(
+        "SELECT threshold_high, threshold_medium "
+        "FROM deployment_config WHERE id = 1"
+    ).fetchone()
     df = pd.read_sql("SELECT * FROM logs", conn)
     conn.close()
+    threshold_high, threshold_medium = (
+        (float(threshold_row[0]), float(threshold_row[1]))
+        if threshold_row
+        else (45.0, 30.0)
+    )
 
     if "role" in df.columns:
         df = df[df["role"].isin(allowed_roles)].copy()
@@ -130,6 +139,7 @@ def score_users():
         return []
 
     df = _run_ensemble(df)
+    role_baselines, overall_baseline = get_effective_role_baselines(df, sector)
 
     summary = df.groupby("user").agg(
         total_logs=("user", "count"),
@@ -156,6 +166,12 @@ def score_users():
     summary["avg_transfer"]      = summary["avg_transfer"].round(1)
     summary["avg_failed_logins"] = summary["avg_failed_logins"].round(1)
     summary["role_baseline_score"] = summary["role_baseline_score"].round(1)
+    summary["role_baseline"] = summary["role"].map(
+        lambda role: {
+            feature: float(value)
+            for feature, value in role_baselines.get(role, overall_baseline).items()
+        }
+    )
 
     return summary.sort_values("risk_score", ascending=False).to_dict(orient="records")
 

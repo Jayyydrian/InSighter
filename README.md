@@ -39,7 +39,9 @@ backend, which provides the Logic, Authentication, and Data tiers.
 - Login + RBAC: `admin` (full access), `compliance` (pseudonymized output), and
   `management` (summary plus authenticated read access to taxonomy, monitoring scope,
   integrations, and resources); the latter is broader than summary-only.
-- Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
+- Displays a live risk dashboard with scores, alerts, user behavior profiles and
+  recent per-user activity history with UTC timestamps and current risk scores, plus
+  a UAV Configuration Module
 
 ## Supported sectors and legacy databases
 

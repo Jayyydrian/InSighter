@@ -170,7 +170,7 @@ class UavConfigTab(QWidget):
 
     def _label(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("color:#94a3b8; font-size:12px;")
+        lbl.setStyleSheet("color:#c4c4c4; font-size:12px;")
         return lbl
 
     def refresh(self, force=False):

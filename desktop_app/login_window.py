@@ -1,18 +1,19 @@
 import logging
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFrame, QHBoxLayout
+    QVBoxLayout, QLabel, QLineEdit, QPushButton, QFrame, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from desktop_app.api_client import ApiClient, ApiError
 from desktop_app.async_utils import run_async
 from desktop_app.safe_text import plain_label
+from desktop_app.theme import GridBackground
 
 logger = logging.getLogger(__name__)
 
 
-class LoginWindow(QWidget):
+class LoginWindow(GridBackground):
     login_succeeded = pyqtSignal(object)  # emits the ApiClient once authenticated
 
     def __init__(self):
@@ -72,6 +73,15 @@ class LoginWindow(QWidget):
         card_layout.addWidget(self.error_label)
 
         card_layout.addSpacing(6)
+        hint = QLabel(
+            "Demo accounts:\nadmin / admin123  (full access)\n"
+            "manager / manager123  (summary-only)\n"
+            "hr_officer / hr_officer123  (compliance)"
+        )
+        hint.setObjectName("muted")
+        hint.setStyleSheet("border-top:1px solid #292929; padding-top:14px; line-height:1.6;")
+        card_layout.addWidget(hint)
+
         center_row = QHBoxLayout()
         center_row.addStretch()
         center_row.addWidget(card)
@@ -81,7 +91,7 @@ class LoginWindow(QWidget):
 
     def _field_label(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("color:#64748b; font-size:11px; margin-top:8px;")
+        lbl.setStyleSheet("color:#929292; font-size:11px; margin-top:8px;")
         return lbl
 
     def _attempt_login(self):

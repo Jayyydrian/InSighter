@@ -8,7 +8,7 @@ import html
 import logging
 import os
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import requests
 
@@ -125,6 +125,10 @@ class ApiClient:
     # ── Data endpoints ───────────────────────────────────────────────────
     def get_scores(self):
         return self._get("/api/scores")
+
+    def get_user_history(self, username):
+        query = urlencode({"user": username})
+        return self._get(f"/api/user-history?{query}")
 
     def get_active_taxonomy(self):
         return self._get("/api/deployment-config/taxonomy")

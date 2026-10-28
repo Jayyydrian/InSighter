@@ -13,6 +13,7 @@ from desktop_app.theme import QSS
 class InSighterApp:
     def __init__(self):
         self.qapp = QApplication(sys.argv)
+        self.qapp.setQuitOnLastWindowClosed(False)
         self.qapp.setStyleSheet(QSS)
         self.main_window = None
         self.login_window = None

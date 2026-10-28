@@ -207,6 +207,29 @@ def _paginated_alert_response(compliance=False):
     return response
 
 
+@app.route("/api/user-history")
+@admin_required
+def user_history():
+    username = request.args.get("user", "").strip()
+    if not username:
+        return jsonify({"error": "A user is required."}), 400
+
+    conn = connect()
+    conn.row_factory = Row
+    rows = conn.execute(
+        """SELECT id, COALESCE(ingested_at, '') AS timestamp,
+                  data_category AS accessed, login_hour, files_accessed,
+                  data_transferred_mb, failed_logins, off_hours_access, source
+           FROM logs
+           WHERE user = ?
+           ORDER BY ingested_at DESC, id DESC
+           LIMIT 100""",
+        (username,),
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(row) for row in rows])
+
+
 @app.route("/api/alerts")
 @admin_required
 def alerts():
