@@ -1,4 +1,5 @@
 import random
+import threading
 import os
 import numpy as np
 import pandas as pd
@@ -31,6 +32,8 @@ MIN_ROLE_USERS = 2
 MODEL_ESTIMATORS = max(40, int(os.environ.get("INSIGHTER_MODEL_ESTIMATORS", "80")))
 CALIBRATION_LOW_QUANTILE = 0.05
 CALIBRATION_HIGH_QUANTILE = 0.95
+_live_category_indices = {}
+_live_category_lock = threading.Lock()
 
 
 def _scale_0_100(raw, reference=None):
@@ -266,7 +269,10 @@ def inject_live_event():
     anomalous = random.random() < 0.25
     values = activity_values(sector, anomalous, random)
     row = (user, *values)
-    category = categories[-1 if anomalous else 0]
+    with _live_category_lock:
+        category_index = _live_category_indices.get(sector, 0)
+        _live_category_indices[sector] = category_index + 1
+    category = categories[category_index % len(categories)]
 
     event = dict(zip(
         ("user", "login_hour", "files_accessed", "data_transferred_mb", "failed_logins", "off_hours_access"),
