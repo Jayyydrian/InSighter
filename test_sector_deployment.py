@@ -61,6 +61,24 @@ class SectorDeploymentTest(unittest.TestCase):
                 ))
             self.assertEqual(len(scored), event_count)
 
+    def test_reseed_generates_every_data_category_for_each_sector(self):
+        for sector, config in SECTORS.items():
+            with self.subTest(sector=sector):
+                self._set_sector(sector)
+                generate()
+                with closing(database.connect()) as conn:
+                    generated_categories = {
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT DISTINCT data_category FROM logs"
+                        ).fetchall()
+                    }
+
+                self.assertEqual(
+                    generated_categories,
+                    set(config["data_categories"]),
+                )
+
     def test_invalid_role_is_rejected_for_active_sector(self):
         self._set_sector("private_school")
         generate()
