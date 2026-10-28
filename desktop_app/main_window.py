@@ -19,21 +19,12 @@ from desktop_app.resources_tab import ResourcesTab
 from desktop_app.audit_tab import AuditTab
 from desktop_app.integrations_tab import IntegrationsTab
 from desktop_app.compliance_tab import ComplianceTab
+from desktop_app.theme import (
+    ACCENT, ACCENT2, BORDER, BORDER2, GREEN, MUTED, MUTED2, RED,
+    SURFACE, SURFACE2, TEXT, GridBackground,
+)
 
 REFRESH_INTERVAL_MS = 5000
-
-BG = "#0a0e1a"
-SURFACE = "#111827"
-SURFACE2 = "#1a2235"
-BORDER = "#1e2d45"
-BORDER2 = "#253550"
-TEXT = "#e2e8f0"
-MUTED = "#64748b"
-MUTED2 = "#94a3b8"
-ACCENT = "#3b82f6"
-ACCENT2 = "#1d4ed8"
-GREEN = "#10b981"
-RED = "#ef4444"
 
 
 class _NavItem(QPushButton):
@@ -93,7 +84,7 @@ class MainWindow(QMainWindow):
 
     # -- UI construction -------------------------------------------------
     def _build_ui(self):
-        central = QWidget()
+        central = GridBackground(draw_grid=False)
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)

@@ -85,6 +85,51 @@ class RoleSessionsTab(QWidget):
         self.details_summary.setWordWrap(True)
         self.details_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         details_layout.addWidget(self.details_summary)
+        self.details_role = plain_label()
+        self.details_role.setStyleSheet(
+            "color:#93c5fd; background:rgba(59,130,246,28); "
+            "border:1px solid #3b82f6; border-radius:4px; "
+            "padding:3px 8px; font-weight:700;"
+        )
+        details_layout.addWidget(self.details_role, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.details_analysis = plain_label()
+        self.details_analysis.setWordWrap(True)
+        self.details_analysis.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_layout.addWidget(self.details_analysis)
+        self.details_behavior_note = plain_label()
+        self.details_behavior_note.setObjectName("muted")
+        self.details_behavior_note.setWordWrap(True)
+        details_layout.addWidget(self.details_behavior_note)
+        self.details_behavior = QGridLayout()
+        self.details_behavior_values = {}
+        for row, (label, feature) in enumerate((
+            ("Files accessed", "files_accessed"),
+            ("Data transferred", "data_transferred_mb"),
+            ("Unsuccessful sign-ins", "failed_logins"),
+            ("Activity outside usual hours", "off_hours_access"),
+        ), start=1):
+            feature_label = plain_label(label)
+            feature_label.setToolTip({
+                "files_accessed": "Average number of files accessed in each recorded activity entry.",
+                "data_transferred_mb": "Average data transferred in each recorded activity entry. 1,024 MB is about 1 GB.",
+                "failed_logins": "Average number of unsuccessful sign-in attempts in each recorded activity entry.",
+                "off_hours_access": "Percentage of recorded activity entries that happened outside usual working hours.",
+            }[feature])
+            self.details_behavior.addWidget(feature_label, row, 0)
+            baseline_value = plain_label()
+            user_value = plain_label()
+            self.details_behavior.addWidget(baseline_value, row, 1)
+            self.details_behavior.addWidget(user_value, row, 2)
+            self.details_behavior_values[feature] = {
+                "baseline": baseline_value,
+                "user": user_value,
+            }
+        self.details_behavior.addWidget(plain_label("Behavior"), 0, 0)
+        self.details_behavior.addWidget(plain_label("Typical for role"), 0, 1)
+        self.details_behavior.addWidget(plain_label("This user (average)"), 0, 2)
+        details_layout.addLayout(self.details_behavior)
         self.details_widget.hide()
         outer.addWidget(self.details_widget)
 
@@ -134,8 +179,9 @@ class RoleSessionsTab(QWidget):
             and (selected_level is None or user.get("risk_level") == selected_level)
         ]
         descending = self.sort_order.currentData() == "descending"
+        rows.sort(key=lambda user: str(user.get("user", "")).casefold())
         rows.sort(
-            key=lambda user: (float(user.get("risk_score", 0)), str(user.get("user", "")).casefold()),
+            key=lambda user: float(user.get("risk_score", 0)),
             reverse=descending,
         )
 
@@ -176,14 +222,104 @@ class RoleSessionsTab(QWidget):
         role = str(user.get("role", "unknown")).replace("_", " ").title()
         self.details_title.setText(f"{username} · {level}")
         self.details_summary.setText(
-            f"Risk score: {user.get('risk_score', 0)}%\n"
-            f"Role: {role}\n"
-            f"Role baseline deviation: {user.get('role_baseline_score', 0)}\n"
-            f"Avg files accessed: {user.get('avg_files', 0)} · "
-            f"Avg transfer: {user.get('avg_transfer', 0)} MB · "
-            f"Avg failed logins: {user.get('avg_failed_logins', 0)}\n"
-            f"Off-hours events: {user.get('off_hours', 0)} · "
-            f"Isolation Forest: {user.get('if_score', 0)} · "
-            f"One-Class SVM: {user.get('ocsvm_score', 0)}"
+            f"Overall risk score: {self._format_score(user.get('risk_score'))} / 100\n"
+            "This summarizes how unusual the recorded activity looks; it is not a percentage chance of a problem."
         )
+        self.details_role.setText(f"Role: {role}")
+        self.details_analysis.setText(
+            f"Difference from this role's usual pattern: "
+            f"{self._format_score(user.get('role_baseline_score'))} / 100 "
+            "(higher means more different; this is not a percentage).\n"
+            f"Isolation Forest: {self._format_score(user.get('if_score'))} · "
+            f"One-Class SVM: {self._format_score(user.get('ocsvm_score'))}"
+        )
+        baseline, estimated = self._role_reference(user)
+        behavior = {
+            "files_accessed": user.get("avg_files"),
+            "data_transferred_mb": user.get("avg_transfer"),
+            "failed_logins": user.get("avg_failed_logins"),
+            "off_hours_access": (
+                float(user["off_hours"]) / float(user["total_logs"])
+                if user.get("total_logs")
+                else None
+            ),
+        }
+        self.details_behavior_note.setText(
+            "Each number is an average per recorded activity entry, not a total. "
+            "The role value is the typical level for this role; the user value is "
+            "this person's average. Data is shown in megabytes (MB)."
+            + (
+                " The role reference is estimated from other monitored users in this "
+                "role because a baseline was not supplied."
+                if estimated else ""
+            )
+            + (
+                " A peer comparison is unavailable because no role baseline or other "
+                "monitored user in this role was supplied."
+                if not estimated and not any(
+                    isinstance(value, (int, float))
+                    for value in baseline.values()
+                ) else ""
+            )
+        )
+        for feature, values in self.details_behavior_values.items():
+            values["baseline"].setText(self._format_behavior_value(feature, baseline.get(feature)))
+            values["user"].setText(self._format_behavior_value(feature, behavior[feature]))
         self.details_widget.show()
+
+    @staticmethod
+    def _format_behavior_value(feature, value):
+        if not isinstance(value, (int, float)):
+            return "Not available"
+        value = float(value)
+        if feature == "off_hours_access":
+            return f"{value * 100:.1f}% of events"
+        units = {
+            "files_accessed": "files per event",
+            "data_transferred_mb": "MB per event",
+            "failed_logins": "attempts per event",
+        }
+        return f"{value:.1f} {units[feature]}"
+
+    @staticmethod
+    def _format_score(value):
+        if not isinstance(value, (int, float)):
+            return "Not available"
+        return f"{float(value):.1f}"
+
+    def _role_reference(self, user):
+        supplied = user.get("role_baseline")
+        reference = dict(supplied) if isinstance(supplied, dict) else {}
+        estimated = False
+        role = user.get("role")
+        peers = [
+            score for score in self.scores
+            if score.get("role") == role and score.get("user") != user.get("user")
+        ]
+        for feature, score_key in (
+            ("files_accessed", "avg_files"),
+            ("data_transferred_mb", "avg_transfer"),
+            ("failed_logins", "avg_failed_logins"),
+        ):
+            if not isinstance(reference.get(feature), (int, float)):
+                values = [
+                    float(score[score_key])
+                    for score in peers
+                    if isinstance(score.get(score_key), (int, float))
+                ]
+                if values:
+                    reference[feature] = sum(values) / len(values)
+                    estimated = True
+
+        if not isinstance(reference.get("off_hours_access"), (int, float)):
+            values = [
+                float(score["off_hours"]) / float(score["total_logs"])
+                for score in peers
+                if isinstance(score.get("off_hours"), (int, float))
+                and isinstance(score.get("total_logs"), (int, float))
+                and float(score["total_logs"]) > 0
+            ]
+            if values:
+                reference["off_hours_access"] = sum(values) / len(values)
+                estimated = True
+        return reference, estimated

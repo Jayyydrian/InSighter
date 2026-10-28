@@ -103,6 +103,28 @@ class SectorDeploymentTest(unittest.TestCase):
             stale_roles = {row[0] for row in stale_conn.execute("SELECT DISTINCT role FROM logs")}
         self.assertEqual(stale_roles, {"researcher", "intern", "admin_staff", "it_staff"})
 
+    def test_score_risk_levels_follow_deployment_thresholds(self):
+        self._set_sector("private_school")
+        generate()
+        with closing(database.connect()) as conn:
+            conn.execute(
+                "UPDATE deployment_config SET threshold_high = 50, "
+                "threshold_medium = 40 WHERE id = 1"
+            )
+            conn.commit()
+
+        scores = score_users()
+
+        self.assertTrue(scores)
+        for user in scores:
+            score = user["risk_score"]
+            expected = (
+                "HIGH" if score >= 50
+                else "MEDIUM" if score >= 40
+                else "LOW"
+            )
+            self.assertEqual(user["risk_level"], expected, user["user"])
+
     def test_live_simulation_varies_hot_users_and_activity(self):
         self._set_sector("private_school")
         generate()

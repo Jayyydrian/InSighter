@@ -27,8 +27,13 @@ class ComplianceRbacTest(unittest.TestCase):
         generate()
         with closing(database.connect()) as conn:
             conn.execute(
-                "INSERT INTO logs (user, role, data_category) VALUES (?,?,?)",
-                ("alice", "researcher", "projects"),
+                """INSERT INTO logs
+                   (user, role, data_category, login_hour, files_accessed,
+                    data_transferred_mb, failed_logins, off_hours_access,
+                    source, ingested_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                ("alice", "researcher", "projects", 21, 12, 42.5, 1, 1,
+                 "api", "2026-10-28 12:34:56"),
             )
             conn.commit()
         cls.original_alerts = app.get_recent_alerts
@@ -65,6 +70,17 @@ class ComplianceRbacTest(unittest.TestCase):
     def test_admin_sees_real_identity(self):
         client = self._login("admin", "admin123")
         self.assertEqual(client.get("/api/alerts").get_json()[0]["user"], "alice")
+        history = client.get("/api/user-history?user=alice")
+        self.assertEqual(history.status_code, 200)
+        event = history.get_json()[0]
+        self.assertEqual(event["timestamp"], "2026-10-28 12:34:56")
+        self.assertEqual(event["accessed"], "projects")
+        self.assertEqual(event["files_accessed"], 12)
+        self.assertEqual(event["data_transferred_mb"], 42.5)
+        self.assertEqual(event["failed_logins"], 1)
+        self.assertEqual(event["off_hours_access"], 1)
+        self.assertEqual(event["source"], "api")
+        self.assertEqual(client.get("/api/user-history").status_code, 400)
         self.assertTrue(any(
             row["username"] == "admin"
             for row in client.get("/api/audit-log").get_json()
@@ -87,6 +103,7 @@ class ComplianceRbacTest(unittest.TestCase):
         self.assertNotIn("admin", [row["username"] for row in entries])
 
         self.assertEqual(client.get("/api/alerts").status_code, 403)
+        self.assertEqual(client.get("/api/user-history?user=alice").status_code, 403)
         self.assertEqual(client.get("/api/audit-log").status_code, 403)
 
     def test_management_remains_aggregate_only(self):
@@ -96,6 +113,7 @@ class ComplianceRbacTest(unittest.TestCase):
         self.assertEqual(set(summary.get_json()), {"HIGH", "MEDIUM", "LOW"})
         for path in (
             "/api/alerts",
+            "/api/user-history?user=alice",
             "/api/compliance/alerts",
             "/api/audit-log",
             "/api/compliance/audit-log",

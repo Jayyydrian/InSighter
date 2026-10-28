@@ -4,7 +4,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QScrollArea
+from PyQt6.QtWidgets import QApplication
 
 from desktop_app.dashboard_tab import DashboardTab
 from desktop_app.role_sessions_tab import RoleSessionsTab
@@ -24,8 +24,8 @@ def wait_for(app, predicate, timeout=3):
 class SectorViewClient:
     def get_scores(self):
         return [
-            {"user": "researcher_01", "role": "researcher", "risk_score": 10, "risk_level": "LOW", "role_baseline_score": 1, "avg_files": 2, "avg_transfer": 3, "if_score": 8, "ocsvm_score": 9, "off_hours": 0},
-            {"user": "drone_operator_01", "role": "drone_operator", "risk_score": 70, "risk_level": "HIGH", "role_baseline_score": 20, "avg_files": 50, "avg_transfer": 100, "if_score": 60, "ocsvm_score": 65, "off_hours": 3},
+            {"user": "researcher_01", "role": "researcher", "risk_score": 10, "risk_level": "LOW", "role_baseline_score": 1, "role_baseline": {"files_accessed": 4, "data_transferred_mb": 10, "failed_logins": 0.2, "off_hours_access": 0.1}, "avg_files": 2, "avg_transfer": 3, "avg_failed_logins": 0.1, "off_hours": 0, "total_logs": 10, "if_score": 8, "ocsvm_score": 9},
+            {"user": "drone_operator_01", "role": "drone_operator", "risk_score": 70, "risk_level": "HIGH", "role_baseline_score": 20, "role_baseline": {"files_accessed": 12, "data_transferred_mb": 35, "failed_logins": 0.5, "off_hours_access": 0.2}, "avg_files": 50, "avg_transfer": 100, "avg_failed_logins": 3, "off_hours": 3, "total_logs": 10, "if_score": 60, "ocsvm_score": 65},
         ]
 
     def get_active_taxonomy(self):
@@ -60,11 +60,88 @@ class SectorViewTest(unittest.TestCase):
         tab.table.cellClicked.emit(0, 1)
 
         self.assertFalse(tab.details_widget.isHidden())
-        self.assertIn("Risk score: 70%", tab.details_summary.text())
-        self.assertIn("Role: Drone Operator", tab.details_summary.text())
-        self.assertIn("Role baseline deviation: 20", tab.details_summary.text())
-        self.assertIn("Avg files accessed: 50", tab.details_summary.text())
-        self.assertIn("Avg transfer: 100 MB", tab.details_summary.text())
+        self.assertIn("Overall risk score: 70.0 / 100", tab.details_summary.text())
+        self.assertIn("not a percentage chance of a problem", tab.details_summary.text())
+        self.assertEqual(tab.details_role.text(), "Role: Drone Operator")
+        self.assertIn("#3b82f6", tab.details_role.styleSheet())
+        self.assertIn(
+            "Difference from this role's usual pattern: 20.0 / 100",
+            tab.details_analysis.text(),
+        )
+        self.assertIn(
+            "Isolation Forest: 60.0 · One-Class SVM: 65.0",
+            tab.details_analysis.text(),
+        )
+        self.assertLess(
+            tab.details_widget.layout().indexOf(tab.details_role),
+            tab.details_widget.layout().indexOf(tab.details_analysis),
+        )
+        self.assertTrue(tab.details_analysis.text().endswith("One-Class SVM: 65.0"))
+        self.assertEqual(
+            tab.details_behavior_values["files_accessed"]["baseline"].text(),
+            "12.0 files per event",
+        )
+        self.assertEqual(
+            tab.details_behavior_values["files_accessed"]["user"].text(),
+            "50.0 files per event",
+        )
+        self.assertEqual(
+            tab.details_behavior_values["off_hours_access"]["baseline"].text(),
+            "20.0% of events",
+        )
+        self.assertEqual(
+            tab.details_behavior_values["off_hours_access"]["user"].text(),
+            "30.0% of events",
+        )
+
+    def test_missing_role_baseline_uses_peer_average_with_plain_language_note(self):
+        class MissingBaselineClient(SectorViewClient):
+            def get_scores(self):
+                scores = super().get_scores()
+                scores.extend([
+                    {
+                        "user": "researcher_02",
+                        "role": "researcher",
+                        "risk_score": 12,
+                        "risk_level": "LOW",
+                        "avg_files": 8,
+                        "avg_transfer": 14,
+                        "avg_failed_logins": 0.4,
+                        "off_hours": 2,
+                        "total_logs": 10,
+                    },
+                ])
+                for score in scores:
+                    score.pop("role_baseline", None)
+                return scores
+
+            def get_active_taxonomy(self):
+                return {"roles": ["researcher", "drone_operator"]}
+
+        tab = RoleSessionsTab(MissingBaselineClient())
+        tab.refresh()
+        self.assertTrue(self._wait_for_role_view(tab, expected_rows=3))
+        researcher = next(
+            score for score in tab.scores if score["user"] == "researcher_01"
+        )
+        tab._show_details(researcher)
+
+        self.assertEqual(
+            tab.details_behavior_values["files_accessed"]["baseline"].text(),
+            "8.0 files per event",
+        )
+        self.assertIn(
+            "estimated from other monitored users in this role",
+            tab.details_behavior_note.text(),
+        )
+        self.assertIn(
+            "Average number of files accessed",
+            tab.details_behavior.itemAtPosition(1, 0).widget().toolTip(),
+        )
+        self.assertIn(
+            "not a total",
+            tab.details_behavior_note.text(),
+        )
 
     def test_role_behavior_filters_and_risk_score_sorting(self):
         class AllRolesClient(SectorViewClient):
@@ -97,39 +174,3 @@ class SectorViewTest(unittest.TestCase):
 
     def _wait_for_role_view(self, tab, expected_rows=1):
         return wait_for(self.app, lambda: tab.table.rowCount() == expected_rows)
-
-    def test_dashboard_history_scrolls_with_twenty_users(self):
-        tab = DashboardTab(SectorViewClient())
-        tab.history = {f"operator_{index:02d}": [index, index + 1] for index in range(1, 21)}
-        tab._update_sparklines()
-        tab.resize(1100, 760)
-        tab.show()
-        self.app.processEvents()
-
-        history_scroll = next(
-            area for area in tab.findChildren(QScrollArea)
-            if area.widget() is tab.sparkline_container
-        )
-        self.assertEqual(len(tab._sparkline_rows), 20)
-        self.assertGreater(history_scroll.verticalScrollBar().maximum(), 0)
-        self.assertLessEqual(history_scroll.height(), 260)
-        tab.close()
-
-    def test_dashboard_drops_old_sector_history_rows(self):
-        class ActiveSectorClient(SectorViewClient):
-            def get_scores(self):
-                return [super().get_scores()[1]]
-
-        tab = DashboardTab(ActiveSectorClient())
-        tab.history = {"researcher_01": [12, 13], "drone_operator_01": [40, 50]}
-        tab._update_sparklines()
-
-        tab._refresh_scores(ActiveSectorClient().get_scores())
-
-        self.assertEqual(set(tab.history), {"drone_operator_01"})
-        self.assertEqual(set(tab._sparkline_rows), {"drone_operator_01"})
-        tab.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

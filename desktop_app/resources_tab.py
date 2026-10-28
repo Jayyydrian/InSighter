@@ -9,7 +9,7 @@ def _metric_box(label_text, sub_text=""):
     label = QLabel(label_text)
     label.setObjectName("h2")
     value = QLabel("—")
-    value.setStyleSheet("font-size:22px; font-weight:700; font-family:Consolas,monospace; color:#e2e8f0;")
+    value.setStyleSheet("font-size:22px; font-weight:700; font-family:Consolas,monospace; color:#f5f5f5;")
     sub = QLabel(sub_text)
     sub.setObjectName("muted")
     layout.addWidget(label)

@@ -38,7 +38,7 @@ Both talk to the same backend (Logic + Authentication + Data tiers).
 - Hashes identifiers and encrypts non-identity event payloads before storage
 - Uses SQLCipher encryption automatically when `sqlcipher3` is installed, with SQLite fallback for development
 - Login + RBAC: `admin` (full access), `compliance` (pseudonymized records), and `management` (summary-only), per Chapter 3
-- Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
+- Displays a live risk dashboard with scores, alerts, recent per-user activity history with UTC timestamps and current risk scores, and a UAV Configuration Module
 
 ## Supported sectors and legacy databases
 
