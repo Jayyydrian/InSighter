@@ -77,7 +77,7 @@ class OverviewAlertTotalTests(unittest.TestCase):
         alerts = [
             {
                 "id": alert_id,
-                "severity": "HIGH",
+                "severity": "CRITICAL",
                 "user": f"test-user-{alert_id}",
                 "login_hour": 10,
                 "description": "Test alert",
@@ -89,7 +89,8 @@ class OverviewAlertTotalTests(unittest.TestCase):
 
         tab._refresh_alerts({"alerts": alerts, "total": 31})
 
-        self.assertEqual(tab.alert_meta.property("alert_count"), 31)
+        self.assertEqual(tab.alert_total, 31)
+        self.assertEqual(tab.alert_meta.property("alert_count"), 25)
         self.assertEqual(tab.alert_meta.text(), "31 alerts · showing 25 of 31")
 
 

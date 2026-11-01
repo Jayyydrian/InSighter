@@ -1156,7 +1156,7 @@ class DashboardTab(QWidget):
                 summary += f" · {len(alerts)} match filter"
         elif len(alerts) != total:
             summary = f"{len(alerts)} of {total} alerts"
-        self.alert_meta.setProperty("alert_count", total)
+        self.alert_meta.setProperty("alert_count", len(alerts))
         self.alert_meta.setProperty("alert_summary", summary)
         self.alert_meta.setText(summary)
 
