@@ -226,3 +226,7 @@ database.db-wal
 database.db-shm
 database.db-journal
 *.db-journal
+database.db.enc
+database.db.plaintext-backup
+database.db.*
+llm_usage_log.jsonl
