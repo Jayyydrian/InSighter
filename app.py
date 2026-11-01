@@ -6,7 +6,13 @@ from flask import Flask, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
 from model import get_learned_role_baselines, score_users, get_recent_alerts, inject_live_event
 from generate_logs import generate
-from llm_advisor import explain_alert, warm_up_model
+from llm_advisor import (
+    check_ollama_reachability,
+    explain_alert,
+    get_llm_runtime_stats,
+    set_warmup_state,
+    warm_up_model,
+)
 from role_baseline import ROLE_BASELINE_FEATURES, build_role_baseline_features
 from auth import (
     admin_required,
@@ -199,6 +205,29 @@ def _paginated_alert_response(compliance=False):
     response.headers["X-Total-Flagged"] = str(total)
     response.headers["X-Returned"] = str(len(page))
     return response
+
+
+@app.route("/api/user-history")
+@admin_required
+def user_history():
+    username = request.args.get("user", "").strip()
+    if not username:
+        return jsonify({"error": "A user is required."}), 400
+
+    conn = connect()
+    conn.row_factory = Row
+    rows = conn.execute(
+        """SELECT id, COALESCE(ingested_at, '') AS timestamp,
+                  data_category AS accessed, login_hour, files_accessed,
+                  data_transferred_mb, failed_logins, off_hours_access, source
+           FROM logs
+           WHERE user = ?
+           ORDER BY ingested_at DESC, id DESC
+           LIMIT 100""",
+        (username,),
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(row) for row in rows])
 
 
 @app.route("/api/alerts")
@@ -609,12 +638,19 @@ def _start_llm_warmup():
         os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") == "1"
         or os.environ.get("INSIGHTER_LLM_WARMUP", "1") == "0"
     ):
+        set_warmup_state("disabled")
         return None
+
+    set_warmup_state("starting")
     worker = threading.Thread(
-        target=warm_up_model, name="insighter-llm-warmup", daemon=True
+        target=_run_llm_warmup, name="insighter-llm-warmup", daemon=True
     )
     worker.start()
     return worker
+
+
+def _run_llm_warmup():
+    set_warmup_state("ready" if warm_up_model() else "failed")
 
 
 if os.environ.get("INSIGHTER_DISABLE_BACKGROUND_SIM") != "1":
@@ -902,6 +938,14 @@ def resources():
         "events_total":    snap["events_total"],
         "events_per_sec":  snap["events_per_sec"],
     })
+
+
+@app.route("/api/llm-stats")
+@admin_required
+def llm_stats():
+    check_ollama_reachability()
+    return jsonify(get_llm_runtime_stats())
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5051))

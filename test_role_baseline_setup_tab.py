@@ -581,7 +581,6 @@ class RoleBaselineSetupTabTest(unittest.TestCase):
         window._apply_baseline_status({"status": "configured"})
         self.assertTrue(window.baseline_nav_item.badge.isHidden())
 
-
 class BaselineApiClientTest(unittest.TestCase):
     def test_baseline_helpers_use_request_and_preserve_server_errors(self):
         client = ApiClient()

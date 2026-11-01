@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, Q
 from desktop_app.async_utils import run_async
 from desktop_app.safe_text import plain_label
 
-STATUS_COLORS = {"not_connected": "#94a3b8", "connected": "#6ee7b7"}
+STATUS_COLORS = {"not_connected": "#c4c4c4", "connected": "#6ee7b7"}
 class IntegrationsTab(QWidget):
     """Status of the three supported log-ingestion data sources."""
 
@@ -60,13 +60,13 @@ class IntegrationsTab(QWidget):
         for i, integ in enumerate(integrations):
             row = QFrame()
             if i < len(integrations) - 1:
-                row.setStyleSheet("border-bottom: 1px solid #1e2d45;")
+                row.setStyleSheet("border-bottom: 1px solid #292929;")
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(18, 14, 18, 14)
 
             text_col = QVBoxLayout()
             name = plain_label(integ["name"])
-            name.setStyleSheet("font-size:13px; font-weight:600; color:#e2e8f0;")
+            name.setStyleSheet("font-size:13px; font-weight:600; color:#f5f5f5;")
             note = plain_label(integ["note"])
             note.setObjectName("muted")
             note.setWordWrap(True)
@@ -74,7 +74,7 @@ class IntegrationsTab(QWidget):
             text_col.addWidget(note)
             row_layout.addLayout(text_col, stretch=1)
 
-            color = STATUS_COLORS.get(integ["status"], "#64748b")
+            color = STATUS_COLORS.get(integ["status"], "#929292")
             pill = plain_label(integ["status"].replace("_", " ").upper())
             pill.setStyleSheet(
                 f"color:{color}; background:rgba(100,116,139,35); border:1px solid {color}; border-radius:10px; "

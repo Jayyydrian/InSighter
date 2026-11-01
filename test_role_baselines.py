@@ -294,6 +294,28 @@ class RoleBaselineStorageAndScoringTest(unittest.TestCase):
             conn.commit()
         self.assertNotIn("outside_role", {row["user"] for row in model.score_users()})
 
+    def test_score_rows_include_effective_role_baseline_values(self):
+        generate()
+        with closing(database.connect()) as conn:
+            conn.execute(
+                "INSERT INTO baseline_setup_status (sector, completed) "
+                "VALUES ('private_school', 1)"
+            )
+            conn.execute(
+                "INSERT INTO role_baselines (sector, role, feature, value) "
+                "VALUES ('private_school', 'researcher', 'files_accessed', 37.5)"
+            )
+            conn.commit()
+
+        researcher = next(
+            user for user in model.score_users() if user["role"] == "researcher"
+        )
+
+        self.assertEqual(researcher["role_baseline"]["files_accessed"], 37.5)
+        self.assertIn("data_transferred_mb", researcher["role_baseline"])
+        self.assertIn("failed_logins", researcher["role_baseline"])
+        self.assertIn("off_hours_access", researcher["role_baseline"])
+
     def test_doubling_or_halving_baseline_effect_stays_within_measured_regression_bound(self):
         for sector, config in SECTORS.items():
             with self.subTest(sector=sector):

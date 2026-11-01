@@ -8,7 +8,7 @@ import html
 import logging
 import os
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import requests
 
@@ -126,6 +126,10 @@ class ApiClient:
     def get_scores(self):
         return self._get("/api/scores")
 
+    def get_user_history(self, username):
+        query = urlencode({"user": username})
+        return self._get(f"/api/user-history?{query}")
+
     def get_active_taxonomy(self):
         return self._get("/api/deployment-config/taxonomy")
 
@@ -150,6 +154,9 @@ class ApiClient:
 
     def get_resources(self):
         return self._get("/api/resources")
+
+    def get_llm_stats(self):
+        return self._get("/api/llm-stats")
 
     def get_uav_config(self):
         return self._get("/api/uav-config")

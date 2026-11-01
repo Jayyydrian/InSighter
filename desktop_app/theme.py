@@ -1,11 +1,16 @@
-BG = "#0a0e1a"
-SURFACE = "#111827"
-SURFACE2 = "#1a2235"
-BORDER = "#1e2d45"
-BORDER2 = "#253550"
-TEXT = "#e2e8f0"
-MUTED = "#64748b"
-MUTED2 = "#94a3b8"
+from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt6.QtWidgets import QFrame, QWidget
+
+
+BG = "#080808"
+SURFACE = "#101010"
+SURFACE2 = "#191919"
+BORDER = "#292929"
+BORDER2 = "#3a3a3a"
+TEXT = "#f5f5f5"
+MUTED = "#929292"
+MUTED2 = "#c4c4c4"
 ACCENT = "#3b82f6"
 ACCENT2 = "#1d4ed8"
 RED = "#ef4444"
@@ -13,9 +18,73 @@ YELLOW = "#f59e0b"
 GREEN = "#22c55e"
 MONO = "'JetBrains Mono', 'Consolas', monospace"
 
+
+class GridBackground(QWidget):
+    """Ink-black background with a subtle white graph-paper grid."""
+
+    GRID_SIZE = 28
+
+    def __init__(self, parent=None, draw_grid=True):
+        super().__init__(parent)
+        self.draw_grid = draw_grid
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(BG))
+        if not self.draw_grid:
+            return
+        painter.setPen(QPen(QColor(255, 255, 255, 48), 1))
+        for x in range(0, self.width(), self.GRID_SIZE):
+            painter.drawLine(x, 0, x, self.height())
+        for y in range(0, self.height(), self.GRID_SIZE):
+            painter.drawLine(0, y, self.width(), y)
+
+
+class InsetShadowFrame(QFrame):
+    """A black card with a restrained shadow falling inward from its edges."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 7, 7)
+        painter.setClipPath(path)
+
+        depth = min(12.0, rect.width() / 4, rect.height() / 4)
+        shadow = QColor(0, 0, 0, 100)
+        clear = QColor(0, 0, 0, 0)
+
+        gradient = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + depth)
+        gradient.setColorAt(0, shadow)
+        gradient.setColorAt(1, clear)
+        painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(), depth), gradient)
+
+        gradient = QLinearGradient(rect.left(), rect.bottom() - depth, rect.left(), rect.bottom())
+        gradient.setColorAt(0, clear)
+        gradient.setColorAt(1, shadow)
+        painter.fillRect(QRectF(rect.left(), rect.bottom() - depth, rect.width(), depth), gradient)
+
+        gradient = QLinearGradient(rect.left(), rect.top(), rect.left() + depth, rect.top())
+        gradient.setColorAt(0, shadow)
+        gradient.setColorAt(1, clear)
+        painter.fillRect(QRectF(rect.left(), rect.top(), depth, rect.height()), gradient)
+
+        gradient = QLinearGradient(rect.right() - depth, rect.top(), rect.right(), rect.top())
+        gradient.setColorAt(0, clear)
+        gradient.setColorAt(1, shadow)
+        painter.fillRect(QRectF(rect.right() - depth, rect.top(), depth, rect.height()), gradient)
+
+
 QSS = f"""
 QWidget {{
-    background: {BG};
+    background: transparent;
     color: {TEXT};
     font-family: 'Inter', 'Segoe UI', sans-serif;
     font-size: 13px;

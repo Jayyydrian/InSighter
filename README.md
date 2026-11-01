@@ -39,7 +39,9 @@ backend, which provides the Logic, Authentication, and Data tiers.
 - Login + RBAC: `admin` (full access), `compliance` (pseudonymized output), and
   `management` (summary plus authenticated read access to taxonomy, monitoring scope,
   integrations, and resources); the latter is broader than summary-only.
-- Displays a live risk dashboard with scores, alerts, user behavior profiles, and a UAV Configuration Module
+- Displays a live risk dashboard with scores, alerts, user behavior profiles and
+  recent per-user activity history with UTC timestamps and current risk scores, plus
+  a UAV Configuration Module
 
 ## Supported sectors and legacy databases
 
@@ -213,6 +215,11 @@ These two `OLLAMA_*` variables configure the Ollama server, not InSighter. Durin
 `INSIGHTER_DISABLE_BACKGROUND_SIM=1` also frees CPU by disabling background simulation.
 The first request after a long idle may take longer while Ollama reloads the model. For
 demos, set `INSIGHTER_LLM_KEEP_ALIVE=2h` to keep it loaded longer.
+
+The Resources tab shows all 14 backend host/process metrics and live local-AI performance
+from real explanation calls, without storing prompts or alert identifiers in its stats.
+Its model benchmark table is historical reference data, not a live measurement.
+No explanation call is made just to populate the panel.
 
 ---
 

@@ -241,7 +241,7 @@ class RoleBaselineSetupTab(QWidget):
         labels = QVBoxLayout()
 
         title = plain_label(item.get("label", feature))
-        title.setStyleSheet("font-size:13px; font-weight:600; color:#e2e8f0;")
+        title.setStyleSheet("font-size:13px; font-weight:600; color:#f5f5f5;")
         labels.addWidget(title)
         display = DISPLAY_UNITS.get(
             feature,
@@ -330,7 +330,7 @@ class RoleBaselineSetupTab(QWidget):
         for role_data in self._roles:
             role = str(role_data.get("role", ""))
             heading = plain_label(role)
-            heading.setStyleSheet("font-size:13px; font-weight:600; color:#e2e8f0;")
+            heading.setStyleSheet("font-size:13px; font-weight:600; color:#f5f5f5;")
             layout.addWidget(heading)
             for item in role_data.get("features", []):
                 key = (role, str(item.get("feature", "")))
