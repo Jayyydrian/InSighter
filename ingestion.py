@@ -1,6 +1,7 @@
 """REST and Active Directory ingestion for normalized activity events."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import os
 
 import requests
@@ -13,7 +14,8 @@ except ImportError:
 from database import connect
 from privacy import sanitize_event
 from sector_config import (
-    DEFAULT_SECTOR, get_active_sector, get_sector_config, get_sector_roster, role_allowed,
+    DEFAULT_SECTOR, data_category_allowed, get_active_sector, get_sector_config,
+    get_sector_roster, role_allowed,
 )
 
 
@@ -33,6 +35,7 @@ def ensure_logs_schema():
             "payload_encrypted": "TEXT DEFAULT ''",
             "ingested_at": "TEXT",
             "data_category": "TEXT DEFAULT ''",
+            "feature_status": "TEXT",
         }
         for name, definition in additions.items():
             if name not in columns:
@@ -49,6 +52,18 @@ def ensure_logs_schema():
                         (category,),
                     )
         sector = get_active_sector(conn) or DEFAULT_SECTOR
+        legacy_sensor_status = json.dumps({
+            "login_hour": "supported",
+            "files_accessed": "unsupported",
+            "data_transferred_mb": "machine_wide",
+            "failed_logins": "unsupported",
+            "off_hours_access": "supported",
+        }, separators=(",", ":"))
+        conn.execute(
+            """UPDATE logs SET feature_status = ?
+               WHERE source = 'endpoint_sensor' AND feature_status IS NULL""",
+            (legacy_sensor_status,),
+        )
         missing = conn.execute(
             """SELECT DISTINCT user FROM logs
                WHERE role IS NULL OR role = '' OR role = 'unknown'"""
@@ -68,31 +83,111 @@ def ensure_logs_schema():
 
 def store_events(events, source="api"):
     """Sanitize and append external events without replacing synthetic records."""
+    if not isinstance(events, list):
+        raise ValueError("Events must be provided as a list.")
     ensure_logs_schema()
     conn = connect()
     inserted = 0
     try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS ingested_event_ids (
+                event_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute(
+            "DELETE FROM ingested_event_ids WHERE created_at < datetime('now', '-30 days')"
+        )
         for event in events:
-            row = sanitize_event(event, source=source)
+            if not isinstance(event, dict):
+                raise ValueError("Each event must be a JSON object.")
+            normalized_event = event
+            feature_status = None
+            if source == "endpoint_sensor":
+                normalized_event = dict(event)
+                normalized_event["user"] = event.get(
+                    "user", event.get("username", event.get("email"))
+                )
+                telemetry_status = event.get("telemetry_status")
+                network_status = (
+                    telemetry_status.get("network")
+                    if isinstance(telemetry_status, dict) else None
+                )
+                raw_transfer = event.get(
+                    "data_transferred_mb", event.get("mb_transferred")
+                )
+                if "telemetry_status" not in event:
+                    transfer_observed = raw_transfer is not None
+                else:
+                    transfer_observed = (
+                        raw_transfer is not None
+                        and isinstance(network_status, str)
+                        and network_status in {"machine_wide_delta", "counter_reset"}
+                    )
+                normalized_event["data_transferred_mb"] = (
+                    raw_transfer if transfer_observed else None
+                )
+                normalized_event["files_accessed"] = None
+                normalized_event["failed_logins"] = None
+                normalized_event["off_hours_access"] = event.get(
+                    "off_hours_access", event.get("off_hours")
+                )
+                normalized_event["data_category"] = event.get(
+                    "data_category", event.get("category", "")
+                )
+                feature_status = {
+                    "login_hour": (
+                        "supported"
+                        if normalized_event.get("login_hour") is not None
+                        else "unsupported"
+                    ),
+                    "files_accessed": "unsupported",
+                    "data_transferred_mb": (
+                        "machine_wide" if transfer_observed else "unsupported"
+                    ),
+                    "failed_logins": "unsupported",
+                    "off_hours_access": (
+                        "supported"
+                        if normalized_event.get("off_hours_access") is not None
+                        else "unsupported"
+                    ),
+                }
+            row = sanitize_event(normalized_event, source=source)
             sector = get_active_sector(conn)
             if sector is not None and not role_allowed(row["role"], sector):
                 raise ValueError(
                     f"Role '{row['role']}' is not allowed for active sector '{sector}'."
                 )
-            data_category = str(event.get("data_category", "")).strip().lower()
+            data_category = str(normalized_event.get("data_category", "")).strip().lower()
             if not data_category:
                 data_category = get_sector_config(sector)["data_categories"][0]
+            if source == "endpoint_sensor" and not data_category_allowed(data_category, sector):
+                raise ValueError(
+                    f"Data category '{data_category}' is not allowed for active sector '{sector}'."
+                )
+            event_id = event.get("event_id")
+            if event_id is not None:
+                if not isinstance(event_id, str) or not 1 <= len(event_id) <= 128:
+                    raise ValueError("Event ID must be a string between 1 and 128 characters.")
+                inserted_id = conn.execute(
+                    "INSERT OR IGNORE INTO ingested_event_ids (event_id) VALUES (?)",
+                    (event_id,),
+                )
+                if inserted_id.rowcount == 0:
+                    continue
             conn.execute(
                 """INSERT INTO logs
                 (user, login_hour, files_accessed, data_transferred_mb,
                  failed_logins, off_hours_access, role, source, payload_encrypted,
-                 ingested_at, data_category)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)""",
+                 ingested_at, data_category, feature_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)""",
                 (
                     row["user"], row["login_hour"], row["files_accessed"],
                     row["data_transferred_mb"], row["failed_logins"],
                     row["off_hours_access"], row["role"], row["source"],
                     row["payload_encrypted"], data_category,
+                    json.dumps(feature_status, separators=(",", ":"))
+                    if feature_status is not None else None,
                 ),
             )
             inserted += 1

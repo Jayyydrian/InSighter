@@ -241,6 +241,28 @@ used by the detector. Set `INSIGHTER_PII_SECRET` to control payload encryption.
 For encrypted database storage, install a compatible `sqlcipher3` build and set
 `INSIGHTER_DB_KEY`; existing plaintext databases are migrated to `database.db.enc`.
 
+### Windows endpoint sensor
+
+The optional endpoint sensor is implemented in `sensor_agent.py`. It samples
+machine-wide network and disk counter deltas, identifies the OS process account and
+hostname, and posts events through the existing `/api/ingest` route. Its Windows
+one-file package is built with `python build_sensor.py --noconsole`; edit
+`dist/config.json` and set the service token environment variable before deployment.
+The service token is configured on the backend as `INSIGHTER_SENSOR_API_TOKEN` and
+must be supplied to the sensor using the variable named by `auth.token_env`.
+
+See [ENDPOINT_SENSOR.md](./ENDPOINT_SENSOR.md) for wire-format compatibility,
+deployment, transport security, test coverage, and the sensor's explicit limitations.
+File-access counts and failed Windows logins are stored as unavailable (`null`), not
+fabricated zeroes. A `feature_status` field is persisted with each endpoint event.
+The existing per-user detector requires five measured features; sensor events do not
+currently meet that requirement because file/login auditing is absent and network
+traffic is host-wide. They remain visible in Sessions with an explicit feature count,
+but are excluded from model scores and alerts. The sensor queue remains bounded
+in-memory state and is not preserved across process restarts. The backend remains
+loopback-bound by default; enabling endpoint access requires a private-network
+deployment and appropriate HTTPS/firewall controls.
+
 ### Active Directory ingestion
 
 Install the dependencies and configure an AD bind account before starting the backend:

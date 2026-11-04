@@ -4,7 +4,13 @@ import re
 
 from flask import Flask, jsonify, request, redirect, url_for, session
 from werkzeug.exceptions import BadRequest
-from model import get_learned_role_baselines, score_users, get_recent_alerts, inject_live_event
+from model import (
+    _scoreable_observations,
+    get_learned_role_baselines,
+    score_users,
+    get_recent_alerts,
+    inject_live_event,
+)
 from generate_logs import generate
 from llm_advisor import (
     check_ollama_reachability,
@@ -22,6 +28,7 @@ from auth import (
     login_required,
     log_action,
     authenticate_login,
+    current_user,
     rotate_session,
 )
 from ingestion import (
@@ -104,11 +111,27 @@ def backend_info():
 def enforce_csrf():
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return None
+    if request.path == "/api/ingest":
+        if _sensor_token_authorized():
+            return None
+        if request.headers.get("Authorization", "").startswith("Bearer "):
+            return jsonify({"error": "Invalid sensor authentication."}), 401
     expected = session.get("csrf_token")
     supplied = request.headers.get("X-CSRF-Token") or request.form.get("_csrf_token")
     if not expected or not supplied or not secrets.compare_digest(expected, supplied):
         return jsonify({"error": "CSRF validation failed."}), 400
     return None
+
+
+def _sensor_token_authorized():
+    configured_token = os.environ.get("INSIGHTER_SENSOR_API_TOKEN", "").strip()
+    authorization = request.headers.get("Authorization", "")
+    if len(configured_token) < 32 or not authorization.startswith("Bearer "):
+        return False
+    supplied_token = authorization[7:].strip()
+    return bool(supplied_token) and secrets.compare_digest(
+        configured_token, supplied_token
+    )
 
 
 @app.route("/api/csrf-token")
@@ -301,8 +324,12 @@ def _baseline_setup_payload(sector):
     status = _baseline_setup_status(sector)
     roles = get_sector_config(sector)["roles"]
     baseline_definitions = build_role_baseline_features()
+    scoreable_row = (
+        _scoreable_observations(row) if row is not None and not row.empty else row
+    )
     default_baselines, overall = (
-        get_learned_role_baselines(row) if row is not None and not row.empty else ({}, {})
+        get_learned_role_baselines(scoreable_row)
+        if scoreable_row is not None and not scoreable_row.empty else ({}, {})
     )
     declared = {}
     conn = connect()
@@ -314,9 +341,14 @@ def _baseline_setup_payload(sector):
     conn.close()
 
     def observed_values_for(role, feature):
-        if row is None or row.empty or "role" not in row.columns or feature not in row.columns:
+        if (
+            scoreable_row is None
+            or scoreable_row.empty
+            or "role" not in scoreable_row.columns
+            or feature not in scoreable_row.columns
+        ):
             return {"mean": None}
-        values = row[(row["role"] == role)][feature].dropna()
+        values = scoreable_row[(scoreable_row["role"] == role)][feature].dropna()
         if values.empty:
             return {"mean": None}
         return {"mean": round(float(values.mean()), 2)}
@@ -882,28 +914,40 @@ def integrations():
 
 
 @app.route("/api/ingest", methods=["POST"])
-@admin_required
 def ingest():
     """Ingest events by push or pull through the same normalization path.
 
     Push mode accepts ``{"events": [...]}`` in the JSON request body. When
     that key is absent, the endpoint keeps its original pull behavior and
-    fetches events from the configured source.
+    fetches events from the configured source. Endpoint sensors authenticate
+    with INSIGHTER_SENSOR_API_TOKEN; dashboard ingestion remains admin-only.
     """
+    sensor_authenticated = _sensor_token_authorized()
+    user = current_user() if not sensor_authenticated else None
+    if not sensor_authenticated and not user:
+        return jsonify({"error": "Authentication required."}), 401
+    if not sensor_authenticated and user["role"] != "admin":
+        return jsonify({"error": "forbidden"}), 403
+    actor = "endpoint_sensor" if sensor_authenticated else user["username"]
     try:
         payload = request.get_json(silent=False) if request.is_json else None
         if isinstance(payload, dict) and "events" in payload:
-            inserted = store_events(payload["events"], source="push")
+            source = "endpoint_sensor" if sensor_authenticated else "push"
+            inserted = store_events(payload["events"], source=source)
+        elif sensor_authenticated:
+            raise ValueError("Endpoint sensor requests must contain an events list.")
         else:
             inserted = ingest_from_configured_source()
-    except (BadRequest, ValueError, requests.RequestException, RuntimeError, OSError) as exc:
+    except (
+        BadRequest, TypeError, ValueError, requests.RequestException, RuntimeError, OSError
+    ) as exc:
         log_action(
-            session.get("username"),
+            actor,
             "INGEST_FAILED",
             f"validation_failed;exception={type(exc).__name__}",
         )
         return jsonify({"error": "Invalid event data."}), 400
-    log_action(session.get("username"), "INGEST_COMPLETED", f"events={inserted}")
+    log_action(actor, "INGEST_COMPLETED", f"events={inserted}")
     return jsonify({"status": "ok", "inserted": inserted})
 
 
@@ -949,5 +993,6 @@ def llm_stats():
 
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5051))
-    print(f"\n  InSighter backend -> http://127.0.0.1:{port}\n")
-    app.run(debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings
+    host = os.environ.get("INSIGHTER_HOST", "127.0.0.1")
+    print(f"\n  InSighter backend -> http://{host}:{port}\n")
+    app.run(host=host, debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings

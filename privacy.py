@@ -48,11 +48,26 @@ def sanitize_event(event, source="synthetic"):
     return {
         "user": str(user).strip(),
         "role": str(event.get("role", event.get("job_role", "unknown"))).strip().lower() or "unknown",
-        "login_hour": int(event.get("login_hour", 0)),
-        "files_accessed": int(event.get("files_accessed", 0)),
-        "data_transferred_mb": float(event.get("data_transferred_mb", 0)),
-        "failed_logins": int(event.get("failed_logins", 0)),
-        "off_hours_access": int(bool(event.get("off_hours_access", 0))),
+        "login_hour": (
+            int(event.get("login_hour", 0))
+            if event.get("login_hour", 0) is not None else None
+        ),
+        "files_accessed": (
+            int(event.get("files_accessed", 0))
+            if event.get("files_accessed", 0) is not None else None
+        ),
+        "data_transferred_mb": (
+            float(event.get("data_transferred_mb", 0))
+            if event.get("data_transferred_mb", 0) is not None else None
+        ),
+        "failed_logins": (
+            int(event.get("failed_logins", 0))
+            if event.get("failed_logins", 0) is not None else None
+        ),
+        "off_hours_access": (
+            int(bool(event.get("off_hours_access", 0)))
+            if event.get("off_hours_access", 0) is not None else None
+        ),
         "source": source,
         "payload_encrypted": encrypt_payload(_remove_identifiers(event)),
     }

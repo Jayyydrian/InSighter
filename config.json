@@ -1,0 +1,28 @@
+{
+  "backend": {
+    "host": "CHANGE_ME_TO_ADMIN_PC_IP_OR_HOSTNAME",
+    "port": 5051,
+    "scheme": "http",
+    "path": "/api/ingest",
+    "timeout_seconds": 5
+  },
+  "collection": {
+    "interval_seconds": 30,
+    "sampling_window_seconds": 5
+  },
+  "endpoint": {
+    "role": "researcher",
+    "category": "projects"
+  },
+  "retry": {
+    "initial_seconds": 2,
+    "max_seconds": 60,
+    "queue_max_events": 1000
+  },
+  "auth": {
+    "token_env": "INSIGHTER_SENSOR_API_TOKEN"
+  },
+  "tls": {
+    "verify": true
+  }
+}

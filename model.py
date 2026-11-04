@@ -1,3 +1,5 @@
+import json
+import math
 import random
 import threading
 import os
@@ -54,13 +56,58 @@ def _scale_0_100(raw, reference=None):
 
 
 def _prepare_model_features(frame, feature_list=None):
-    """Apply log1p to skewed volumes, then leave scaling to the existing scaler."""
-    prepared = frame.reindex(columns=feature_list or FEATURES, fill_value=0).copy()
-    prepared = prepared.fillna(0)
+    """Prepare complete observations; missing measurements must be handled before fitting."""
+    columns = feature_list or FEATURES
+    prepared = frame.reindex(columns=columns).copy()
+    if prepared.isna().any().any():
+        raise ValueError("Model features contain unavailable measurements.")
+    for column in columns:
+        prepared[column] = pd.to_numeric(prepared[column], errors="raise")
     for feature in SKEWED_FEATURES.intersection(prepared.columns):
         # StandardScaler already handles centering/scaling; log1p first reduces heavy-tail dominance.
         prepared[feature] = np.log1p(prepared[feature].clip(lower=0))
     return prepared
+
+
+def _feature_statuses(row):
+    raw_status = row.get("feature_status")
+    statuses = None
+    if isinstance(raw_status, str):
+        try:
+            statuses = json.loads(raw_status)
+        except json.JSONDecodeError:
+            statuses = {}
+    elif isinstance(raw_status, dict):
+        statuses = raw_status
+    elif raw_status is not None and not pd.isna(raw_status):
+        statuses = {}
+    if statuses is not None and not isinstance(statuses, dict):
+        statuses = {}
+
+    available = []
+    for feature in FEATURES:
+        value = row.get(feature)
+        try:
+            has_value = value is not None and math.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError):
+            has_value = False
+        if not has_value:
+            continue
+        if statuses is None and row.get("source") == "endpoint_sensor":
+            if feature in {"login_hour", "off_hours_access"}:
+                available.append(feature)
+            continue
+        if statuses is None or statuses.get(feature) == "supported":
+            available.append(feature)
+    return available
+
+
+def _scoreable_observations(frame):
+    if frame.empty:
+        return frame.copy()
+    availability = frame.apply(_feature_statuses, axis=1)
+    mask = availability.apply(lambda features: len(features) == len(FEATURES))
+    return frame.loc[mask].copy()
 
 
 def _fit_group_models(group, score_group=None, contamination=CONTAMINATION, ocsvm_nu=None, feature_list=None):
@@ -85,9 +132,13 @@ def _fit_group_models(group, score_group=None, contamination=CONTAMINATION, ocsv
 
 
 def _run_ensemble(df, contamination=CONTAMINATION, ocsvm_nu=None, fit_df=None, feature_list=None):
-    """Fit role-specific models when enough role data exists, with fallback."""
-    df = attach_roles(df)
-    training = attach_roles(fit_df if fit_df is not None else df)
+    """Score only observations with every configured feature genuinely available."""
+    df = _scoreable_observations(attach_roles(df))
+    training = _scoreable_observations(
+        attach_roles(fit_df if fit_df is not None else df)
+    )
+    if df.empty or training.empty:
+        return df
     fallback = _fit_group_models(training, df, contamination, ocsvm_nu, feature_list)
     df["if_score"], df["is_anomaly"], df["ocsvm_score"] = fallback
     training["is_anomaly"] = _fit_group_models(
@@ -141,11 +192,14 @@ def score_users():
     if df.empty:
         return []
 
+    total_logs = df.groupby("user").size()
     df = _run_ensemble(df)
+    if df.empty:
+        return []
     role_baselines, overall_baseline = get_effective_role_baselines(df, sector)
 
     summary = df.groupby("user").agg(
-        total_logs=("user", "count"),
+        scored_logs=("user", "count"),
         anomalous_logs=("is_anomaly", "sum"),
         avg_files=("files_accessed", "mean"),
         avg_transfer=("data_transferred_mb", "mean"),
@@ -157,6 +211,12 @@ def score_users():
         role=("role", "first"),
         role_baseline_score=("role_baseline_score", "mean"),
     ).reset_index()
+    summary["total_logs"] = summary["user"].map(total_logs).fillna(0).astype(int)
+    summary["unscored_logs"] = summary["total_logs"] - summary["scored_logs"]
+    summary["scoring_quality"] = "complete_observations_only"
+    summary["feature_coverage"] = 1.0
+    summary["features_used"] = json.dumps(FEATURES)
+    summary["features_unavailable"] = json.dumps([])
 
     summary["risk_score"]  = summary["risk_score"].round(1)
     summary["if_score"]    = summary["if_score"].round(1)
@@ -181,7 +241,8 @@ def score_users():
 
 def get_learned_role_baselines(events):
     """Return the same non-anomalous role means used by the scoring pipeline."""
-    return calculate_role_baselines(_run_ensemble(events.copy()))
+    scored = _run_ensemble(events.copy())
+    return calculate_role_baselines(scored) if not scored.empty else ({}, {})
 
 
 def order_alerts(alerts, sort="priority"):
@@ -213,6 +274,8 @@ def get_recent_alerts(limit=25, offset=0, sort="priority"):
         return []
 
     df = _run_ensemble(df)
+    if df.empty:
+        return []
     # An alert fires if either model treats the row as anomalous, or the blended score is high
     ocsvm_cut = np.percentile(df["ocsvm_score"], 100 * (1 - CONTAMINATION))
     df["ocsvm_flag"] = (df["ocsvm_score"] >= ocsvm_cut).astype(int)
