@@ -4,9 +4,9 @@
 
 **NOT PRODUCTION READY.**
 
-The current implementation is a working prototype for collecting a small set of Windows host-level counters, sending events to an existing Flask ingestion route, and persisting them for review in InSighter. It has useful authentication, duplicate suppression, bounded retry, payload encryption, and measurement-quality handling. It does not yet meet the operational, identity, transport, collection, resilience, or validation requirements expected of a production endpoint-monitoring agent.
+The current implementation is a working prototype for collecting Windows host-level counters plus opt-in removable-volume and aggregate file-operation activity, sending events to existing Flask ingestion, and persisting them for review in InSighter. It has authentication, duplicate suppression, bounded retry, payload encryption, and measurement-quality handling. It does not yet meet the operational, identity, transport, collection, resilience, or validation requirements expected of a production endpoint-monitoring agent.
 
-The current event stream is intentionally excluded from the existing per-user anomaly detector unless every model feature is genuinely supported and attributable. This avoids treating missing measurements as zeroes or scoring machine-wide network activity as though it belonged to one user.
+Standard sensor rows do not currently qualify for the existing per-user anomaly detector because not all model features are supported and attributable. USB/filesystem events are stored separately and never enter the existing model inputs. This avoids treating missing measurements as zeroes or scoring machine-wide network activity as though it belonged to one user.
 
 ## Scope and evidence
 
@@ -14,10 +14,10 @@ This assessment covers the repository implementation and verification recorded f
 
 | Area | Files inspected or changed |
 |---|---|
-| Sensor and packaging | `sensor_agent.py`, `build_sensor.py`, `config.json` |
+| Sensor and packaging | `sensor_agent.py`, `usb_monitor.py`, `filesystem_monitor.py`, `build_sensor.py`, `config.json` |
 | Backend authentication and ingestion | `app.py`, `ingestion.py`, `privacy.py`, `sector_config.py`, `generate_logs.py` |
 | Anomaly scoring and presentation | `model.py`, `desktop_app/sessions_tab.py`, existing dashboard/API paths |
-| Tests | `test_sensor_agent.py`, `test_sensor_backend_integration.py`, `test_model_calibration.py`, `test_phase3_contracts.py`, existing ingestion and desktop tests |
+| Tests | `test_sensor_agent.py`, `test_endpoint_activity.py`, `test_sensor_backend_integration.py`, `test_model_calibration.py`, `test_phase3_contracts.py`, existing ingestion and desktop tests |
 | Operational documentation | `ENDPOINT_SENSOR.md`, `README.md`, `summary_es_tc.md`, `SYSTEM_SUMMARY_REPORT.md` |
 | CI validation | `.github/workflows/ci.yml`, `scripts/run_tests_ci.py` |
 
@@ -27,7 +27,7 @@ This is a repository and local-test assessment, not an external penetration test
 
 | Category | Status | Evidence and remaining gap |
 |---|---|---|
-| Core collection process | **PARTIAL** | `sensor_agent.py` samples host-wide network and disk counters and derives local sampling hour/off-hours. It does not collect exact file accesses, failed logons, or per-user/process activity. |
+| Core collection process | **PARTIAL** | `sensor_agent.py` samples host-wide network and disk counters and derives local sampling hour/off-hours. Optional monitors detect mounted Windows `DRIVE_REMOVABLE` volumes and count create/modify/delete/rename events without retaining paths or names. Exact file accesses, failed logons, and per-user/process activity are not collected. |
 | Endpoint/user identity | **PARTIAL** | Events use host name plus the account running the process. This is not device enrollment or cryptographic device identity, and a service account may not identify the interactive user. |
 | Measurement semantics | **IMPLEMENTED, BOUNDED** | Unsupported file/login and unavailable network values are represented as `NULL`; `feature_status` records support and scope. Machine-wide network values are not accepted as per-user detector features. |
 | Backend ingestion | **IMPLEMENTED, LIMITED** | `/api/ingest` accepts sensor batches, validates the configured shared bearer token, normalizes fields, checks active-sector role/category compatibility, encrypts the event payload, persists to SQLite, and returns insertion counts. |
@@ -36,10 +36,10 @@ This is a repository and local-test assessment, not an external penetration test
 | Retry and offline handling | **PARTIAL** | Retries use bounded exponential backoff and an in-memory queue; deduplication makes repeated delivery safer. The queue is lost on process exit/reboot, and overflow discards the oldest queued event. |
 | Persistence and duplicate handling | **IMPLEMENTED, LIMITED** | SQLite stores accepted events; event-ID deduplication is transactional and duplicate IDs are retained for 30 days. No endpoint-side durable encrypted spool or replay after restart exists. |
 | Anomaly detection | **PARTIAL / NOT SENSOR-READY** | Existing Isolation Forest / One-Class SVM and role-baseline paths require five complete, supported features. Sensor file-access and failed-login features are unsupported and network transfer is machine-wide, so current sensor events do not contribute to user-level scores or alerts. No endpoint-specific model exists. |
-| Desktop visibility | **PARTIAL** | Sensor records appear in the existing Sessions path with data-quality/usability information. There is no endpoint inventory/health view or raw telemetry inspector; encrypted supplemental fields are not shown. |
+| Desktop visibility | **PARTIAL** | Standard sensor records appear in Sessions with data-quality/usability information. A separate USB & File Activity page shows endpoint activity records. There is no endpoint inventory/health view or raw telemetry inspector; encrypted supplemental fields are not shown. |
 | Installation and lifecycle | **PARTIAL** | A Windows one-file PyInstaller build and external configuration are provided; a stop-file mechanism supports graceful shutdown. There is no installer, managed service registration, auto-start, signed update, or managed uninstall workflow. |
 | Privacy and retention operations | **PARTIAL** | Non-identity telemetry payloads use the existing encrypted-payload path, and deduplication records expire after 30 days. There is no sensor-specific retention policy/administrative purge workflow, endpoint consent/control plane, or full telemetry access/export workflow. |
-| Validation | **PARTIAL** | The repository suite and local Windows package smoke tests pass. Clean-machine installation, real Wi-Fi/hotspot operation, production TLS/reverse proxy, Windows audit-policy behavior, soak/load, and visual end-to-end UI testing have not been verified. |
+| Validation | **PARTIAL** | The full 322-test suite passes (308-test baseline); focused activity tests and an isolated Windows package/activity-worker smoke test pass. Clean-machine installation, physical USB behavior, real Wi-Fi/hotspot operation, production TLS/reverse proxy, Windows audit-policy behavior, soak/load, and visual end-to-end UI testing have not been verified. |
 
 ## Implemented controls and behavior
 
@@ -50,6 +50,8 @@ This is a repository and local-test assessment, not an external penetration test
 - Sensor-generated event IDs provide duplicate suppression, with a 30-day server-side deduplication window.
 - Unsupported file-access and failed-login measurements are persisted as SQL `NULL`, not fabricated zeroes. `logs.feature_status` captures support/scope, and old sensor rows receive conservative migration statuses.
 - The model rejects incomplete inputs instead of filling missing features with zero. Sensor events without all five supported model inputs remain visible but are excluded from model fitting/scoring and user risk summaries.
+- The optional activity worker reports mounted removable-volume connect/disconnect events and aggregate file create/modify/delete/rename counts. These events use `endpoint_activity_events`, share event-ID deduplication, and do not enter `logs` or model features.
+- The admin-only endpoint-activity API and separate dashboard page expose those event summaries without changing the existing Sessions view.
 - Sensor HTTP calls validate expected acknowledgements, disable redirects, use a timeout, and log failures. Retry is bounded; queue storage is volatile.
 
 ## High-priority gaps before production
@@ -67,16 +69,19 @@ This is a repository and local-test assessment, not an external penetration test
 
 | Check | Result |
 |---|---|
-| Repository CI test runner, `EXPECTED_MIN_TESTS=285` | **308 tests passed**, no failures or errors. The CI minimum is being raised to 308 to match the verified suite count. |
-| Focused data-quality regression suite | **57 tests passed**, covering sensor/backend integration, ingestion validation, model eligibility, role/sector behavior, and desktop contracts. |
+| Pre-change repository baseline | **308 tests passed**, no failures or errors. |
+| Post-change repository CI test runner, `EXPECTED_MIN_TESTS=322` | **322 tests passed**, no failures or errors. CI minimum is 322. |
+| Focused pre-feature data-quality regression suite | **57 tests passed**, covering sensor/backend integration, ingestion validation, model eligibility, role/sector behavior, and desktop contracts. |
+| Focused post-change sensor/activity/backend/dashboard group | **47 tests passed**. |
 | Python syntax compilation of changed implementation/test files | Passed. |
 | Ruff lint | Passed. |
 | `git diff --check` | Passed. |
-| Windows PyInstaller one-file, no-console package and local backend smoke tests | Previously passed in this workspace: authenticated event delivery, SQLite persistence, invalid-config logging, and stop-file shutdown. |
+| Earlier packaged sensor local-backend smoke | Passed before adding USB/filesystem monitoring: authenticated delivery, SQLite persistence, invalid-config logging, and stop-file shutdown. |
+| Windows PyInstaller one-file, no-console build with activity monitoring enabled | Passed in a temporary directory; executable started the activity worker without watchdog import errors and shut down through the stop-file mechanism. |
 
-The initial full-suite attempt failed because `ldap3`, already declared by `requirements.txt`, was absent from the active virtual environment. After installing the declared requirements, the full suite passed. No dependency manifest was changed for that environment repair.
+The first package build attempt failed because PyInstaller was absent from the active virtual environment; it was installed there without changing a project dependency manifest, and the isolated build passed. The first package smoke configuration was invalid (interval and token below configured minimums); correcting those inputs produced the successful lifecycle check. The initial focused activity fixture lacked the existing `logs` table; the fixture setup was corrected and the focused tests passed.
 
-No performance or scalability measurements were taken. The endpoint package was not independently installed on a clean Windows machine without Python. Physical hotspot/Wi-Fi and Windows Firewall configuration, production HTTPS, Windows Security event-log collection, long-duration/queue-exhaustion tests, high concurrency, multi-endpoint load, and visual PyQt end-to-end automation remain unperformed.
+No performance or scalability measurements were taken. The endpoint package was not independently installed on a clean Windows machine without Python. Physical USB attach/remove behavior, hotspot/Wi-Fi and Windows Firewall configuration, production HTTPS, Windows Security event-log collection, long-duration/queue-exhaustion tests, high concurrency, multi-endpoint load, and visual PyQt end-to-end automation remain unperformed.
 
 ## Release recommendation
 

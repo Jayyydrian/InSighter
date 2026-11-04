@@ -28,6 +28,7 @@ ADMIN_PAGE_CLIENT_METHODS = {
     7: ("Integrations", ("get_integrations",)),
     8: ("Baseline Setup", ("get_baseline_setup",)),
     9: ("UAV Configuration", ("get_uav_config", "get_monitoring_scope")),
+    10: ("USB & File Activity", ("get_endpoint_activity",)),
 }
 ROLE_PAGE_CLIENT_METHODS = {
     "management": {"Summary Report": ("get_summary",)},
@@ -236,6 +237,10 @@ class StartupFakeClient:
 
     def get_sessions(self):
         self._record_call("get_sessions")
+        return []
+
+    def get_endpoint_activity(self):
+        self._record_call("get_endpoint_activity")
         return []
 
     def get_active_taxonomy(self):

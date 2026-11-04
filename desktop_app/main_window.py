@@ -15,6 +15,7 @@ from desktop_app.uav_config_tab import UavConfigTab
 from desktop_app.role_baseline_setup_tab import RoleBaselineSetupTab
 from desktop_app.summary_tab import SummaryTab
 from desktop_app.sessions_tab import SessionsTab
+from desktop_app.endpoint_activity_tab import EndpointActivityTab
 from desktop_app.resources_tab import ResourcesTab
 from desktop_app.audit_tab import AuditTab
 from desktop_app.integrations_tab import IntegrationsTab
@@ -212,6 +213,8 @@ class MainWindow(QMainWindow):
 
         sessions_item = _NavItem("\u25c8", "User Sessions")
         layout.addWidget(sessions_item)
+        endpoint_activity_item = _NavItem("\u25a3", "USB & File Activity")
+        layout.addWidget(endpoint_activity_item)
         profiles_item = _NavItem("\u25c9", "User Profiles")
         layout.addWidget(profiles_item)
         role_item = _NavItem("\u25c7", "Role Behavior")
@@ -251,7 +254,7 @@ class MainWindow(QMainWindow):
         self.overview_badge.move(overview_item.width() - self.overview_badge.width() - 10, 6)
         self.overview_badge.show()
 
-        for item in (overview_item, sessions_item, profiles_item, role_item, alerts_item,
+        for item in (overview_item, sessions_item, endpoint_activity_item, profiles_item, role_item, alerts_item,
                      resources_item, audit_item, integrations_item, baseline_item, settings_item):
             self.nav_group.addButton(item)
 
@@ -279,6 +282,7 @@ class MainWindow(QMainWindow):
             integrations_item: 7,
             baseline_item: 8,
             settings_item: 9,
+            endpoint_activity_item: 10,
         }
         for item in self._nav_pages:
             item.clicked.connect(lambda _checked, it=item: self._go_to(it))
@@ -332,6 +336,7 @@ class MainWindow(QMainWindow):
 
         self.dashboard_tab = DashboardTab(self.client)
         self.sessions_tab = SessionsTab(self.client)
+        self.endpoint_activity_tab = EndpointActivityTab(self.client)
         self.profiles_tab = ProfilesTab(self.client)
         self.role_sessions_tab = RoleSessionsTab(self.client)
         self.alerts_tab = AlertsTab(self.client)
@@ -343,7 +348,8 @@ class MainWindow(QMainWindow):
 
         pages = (self.dashboard_tab, self.sessions_tab, self.profiles_tab, self.role_sessions_tab, self.alerts_tab,
              self.resources_tab, self.audit_tab,
-                 self.integrations_tab, self.baseline_setup_tab, self.uav_tab)
+                 self.integrations_tab, self.baseline_setup_tab, self.uav_tab,
+                 self.endpoint_activity_tab)
 
         for page in pages:
             scroller = QScrollArea()

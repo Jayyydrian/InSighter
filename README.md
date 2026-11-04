@@ -253,15 +253,21 @@ must be supplied to the sensor using the variable named by `auth.token_env`.
 
 See [ENDPOINT_SENSOR.md](./ENDPOINT_SENSOR.md) for wire-format compatibility,
 deployment, transport security, test coverage, and the sensor's explicit limitations.
-File-access counts and failed Windows logins are stored as unavailable (`null`), not
-fabricated zeroes. A `feature_status` field is persisted with each endpoint event.
-The existing per-user detector requires five measured features; sensor events do not
-currently meet that requirement because file/login auditing is absent and network
-traffic is host-wide. They remain visible in Sessions with an explicit feature count,
-but are excluded from model scores and alerts. The sensor queue remains bounded
-in-memory state and is not preserved across process restarts. The backend remains
-loopback-bound by default; enabling endpoint access requires a private-network
-deployment and appropriate HTTPS/firewall controls.
+The sensor can optionally detect Windows removable-volume connections and count
+file create/modify/delete/rename events on those volumes. It records counts only:
+file names, paths, and contents are not collected, and read/open auditing is not
+implemented. These new events use the separate `endpoint_activity_events` table and
+the admin-only USB & File Activity page; they do not alter the existing `logs` rows,
+feature definitions, detector eligibility, scores, or alerts. The existing per-user
+detector still requires five measured features; ordinary endpoint telemetry remains
+ineligible because file access is unsupported and network traffic is host-wide.
+Windows Security failed-login counting is separately opt-in through
+`failed_login_monitoring.enabled`; it never changes audit policy and reports a null
+measurement when disabled, unconfigured, inaccessible, or in error. Older endpoint
+configs without the optional monitor settings keep those features disabled. The
+sensor queue remains bounded in-memory state and is not preserved across process
+restarts. The backend remains loopback-bound by default; enabling endpoint access
+requires a private-network deployment and appropriate HTTPS/firewall controls.
 
 ### Active Directory ingestion
 

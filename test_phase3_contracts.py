@@ -16,9 +16,11 @@ import app as app_module
 import database
 import model
 from auth import init_users_table
+from generate_logs import generate
 from desktop_app.alerts_tab import AlertsTab
 from desktop_app.audit_tab import AuditTab
 from desktop_app.dashboard_tab import DashboardTab
+from desktop_app.endpoint_activity_tab import EndpointActivityTab
 from desktop_app.integrations_tab import IntegrationsTab
 from desktop_app.main_window import MainWindow
 from desktop_app.profiles_tab import ProfilesTab
@@ -117,6 +119,50 @@ class ScoreHistoryContractTests(Phase3ContractTestCase):
         self.assertEqual(tab.table.item(0, 7).text(), "Unavailable")
         self.assertEqual(tab.table.item(0, 9).text(), "2/5; not scored")
         tab.close()
+
+    def test_endpoint_activity_tab_displays_counts_without_paths(self):
+        tab = EndpointActivityTab(object())
+        tab._apply_refresh([{
+            "timestamp": "2026-11-05T00:00:00Z",
+            "endpoint_id": "HOST-01",
+            "user": "HOST-01\\operator",
+            "event_type": "filesystem_activity",
+            "drive_letter": "E:\\",
+            "operation_counts": '{"create":2,"rename":1}',
+        }])
+
+        self.assertEqual(tab.table.item(0, 3).text(), "filesystem_activity")
+        self.assertEqual(tab.table.item(0, 5).text(), "create: 2, rename: 1")
+        self.assertNotIn("path", tab.table.item(0, 5).text().lower())
+        tab.close()
+
+    def test_endpoint_activity_api_returns_sensor_events_to_admin(self):
+        generate()
+        token = "phase3-sensor-token-with-at-least-thirty-two-characters"
+        event = {
+            "event_id": "phase3-usb-connected",
+            "source": "endpoint_sensor",
+            "event_type": "usb_connected",
+            "timestamp": "2026-11-05T00:00:00Z",
+            "user": "PHASE3-ENDPOINT\\operator",
+            "endpoint_id": "PHASE3-ENDPOINT",
+            "role": "researcher",
+            "category": "projects",
+            "drive_letter": "E:\\",
+        }
+        with patch.dict(os.environ, {"INSIGHTER_SENSOR_API_TOKEN": token}):
+            ingested = self.client.post(
+                "/api/ingest",
+                json={"events": [event]},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        response = self.client.get("/api/endpoint-activity")
+
+        self.assertEqual(ingested.get_json(), {"status": "ok", "inserted": 1})
+        self.assertEqual(response.status_code, 200)
+        rows = response.get_json()
+        self.assertEqual(rows[0]["event_id"], "phase3-usb-connected")
+        self.assertEqual(rows[0]["drive_letter"], "E:\\")
 
     def test_dashboard_history_consumes_score_and_level_pair(self):
         tab = DashboardTab(object())
@@ -254,6 +300,7 @@ class RefreshTickContractTests(unittest.TestCase):
         refresh_tabs = (
             DashboardTab,
             SessionsTab,
+            EndpointActivityTab,
             ProfilesTab,
             RoleSessionsTab,
             AlertsTab,

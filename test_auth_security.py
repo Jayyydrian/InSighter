@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from http.cookies import SimpleCookie
 from unittest.mock import patch
@@ -48,6 +49,34 @@ class AuthSecurityTest(unittest.TestCase):
         role, retry_after = authenticate_login("audit-admin", "wrong-password")
         self.assertIsNone(role)
         self.assertIsNone(retry_after)
+
+    def test_correct_login_is_allowed_after_cooldown_expires(self):
+        for _ in range(3):
+            authenticate_login("audit-admin", "wrong-password")
+        conn = database.connect()
+        try:
+            conn.execute(
+                "UPDATE login_throttle SET locked_until = ?",
+                (time.time() - 1,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        role, retry_after = authenticate_login(
+            "audit-admin", "a-long-test-password-123"
+        )
+
+        self.assertEqual(role["role"], "admin")
+        self.assertIsNone(retry_after)
+        conn = database.connect()
+        try:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM login_throttle"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(remaining, 0)
 
     def test_unknown_accounts_use_same_lockout_policy(self):
         for _ in range(2):

@@ -183,6 +183,9 @@ class ApiClient:
     def get_sessions(self):
         return self._get("/api/sessions")
 
+    def get_endpoint_activity(self):
+        return self._get("/api/endpoint-activity")
+
     def get_audit_log(self):
         return self._get("/api/audit-log")
 

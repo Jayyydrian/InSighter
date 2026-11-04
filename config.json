@@ -24,5 +24,12 @@
   },
   "tls": {
     "verify": true
+  },
+  "endpoint_activity": {
+    "enabled": true,
+    "poll_interval_seconds": 5
+  },
+  "failed_login_monitoring": {
+    "enabled": false
   }
 }

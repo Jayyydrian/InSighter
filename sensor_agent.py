@@ -12,6 +12,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import platform
+import queue
 import re
 import signal
 import socket
@@ -23,6 +24,8 @@ import uuid
 
 import psutil
 import requests
+
+from failed_login_monitor import FailedLoginMonitor, FailedLoginObservation
 
 SENSOR_VERSION = "1.0.0"
 ALLOWED_ROLES = {
@@ -206,6 +209,30 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
             "Backend transport is unencrypted HTTP. Use HTTPS or an isolated, trusted demonstration network."
         )
 
+    endpoint_activity = config.get("endpoint_activity", {})
+    if not isinstance(endpoint_activity, dict):
+        raise ConfigurationError("'endpoint_activity' must be an object.")
+    activity_enabled = endpoint_activity.get("enabled", False)
+    if not isinstance(activity_enabled, bool):
+        raise ConfigurationError("'endpoint_activity.enabled' must be a boolean.")
+    activity_poll_interval = _number(
+        {
+            "poll_interval_seconds": endpoint_activity.get(
+                "poll_interval_seconds", 5
+            )
+        },
+        "poll_interval_seconds",
+        1,
+        60,
+    )
+
+    failed_login_monitoring = config.get("failed_login_monitoring", {})
+    if not isinstance(failed_login_monitoring, dict):
+        raise ConfigurationError("'failed_login_monitoring' must be an object.")
+    failed_logins_enabled = failed_login_monitoring.get("enabled", False)
+    if not isinstance(failed_logins_enabled, bool):
+        raise ConfigurationError("'failed_login_monitoring.enabled' must be a boolean.")
+
     return {
         "backend": {
             "host": host,
@@ -226,6 +253,11 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
         },
         "auth": {"token": token},
         "tls": {"verify": True},
+        "endpoint_activity": {
+            "enabled": activity_enabled,
+            "poll_interval_seconds": activity_poll_interval,
+        },
+        "failed_login_monitoring": {"enabled": failed_logins_enabled},
     }
 
 
@@ -303,7 +335,11 @@ def _disk_counters() -> dict[str, int] | None:
     return {"read_bytes": counters.read_bytes, "write_bytes": counters.write_bytes}
 
 
-def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
+def collect_event(
+    config: dict[str, Any],
+    sleep=time.sleep,
+    failed_login_monitor: FailedLoginMonitor | None = None,
+) -> dict[str, Any]:
     """Sample machine-wide network/disk deltas and build a backend-compatible event."""
     window = config["collection"]["sampling_window_seconds"]
     network_before = _network_counters()
@@ -330,6 +366,15 @@ def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
     )
     network_available = network_sent is not None and network_received is not None
     total_network_bytes = network_sent + network_received if network_available else None
+    failed_login_observation = FailedLoginObservation(None, "disabled")
+    if failed_login_monitor is not None:
+        try:
+            failed_login_observation = failed_login_monitor.observe()
+        except Exception:
+            LOGGER.exception(
+                "Optional failed-login collection failed; other telemetry continues."
+            )
+            failed_login_observation = FailedLoginObservation(None, "error")
     sampled_at = datetime.now().astimezone()
     login_hour = sampled_at.hour
 
@@ -346,7 +391,7 @@ def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
             round(total_network_bytes / (1024 * 1024), 6)
             if total_network_bytes is not None else None
         ),
-        "failed_logins": None,
+        "failed_logins": failed_login_observation.count,
         "off_hours": int(login_hour < 6 or login_hour > 21),
         "measurement_window_seconds": window,
         "telemetry_status": {
@@ -356,7 +401,7 @@ def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
                 else sent_status if sent_status != "available" else received_status
             ),
             "files_accessed": "unsupported_no_file_audit",
-            "failed_logins": "unsupported_windows_security_log_not_enabled",
+            "failed_logins": failed_login_observation.status,
             "disk_io": "machine_wide_delta",
         },
         "feature_status": {
@@ -367,7 +412,12 @@ def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
                 if total_network_bytes is not None
                 else "unsupported"
             ),
-            "failed_logins": "unsupported",
+            "failed_logins": (
+                "supported"
+                if failed_login_observation.status == "available"
+                and failed_login_observation.count is not None
+                else "unsupported"
+            ),
             "off_hours_access": "supported",
         },
         "telemetry_metrics": {
@@ -382,6 +432,11 @@ def collect_event(config: dict[str, Any], sleep=time.sleep) -> dict[str, Any]:
             "disk_write_bytes": disk_write,
             "disk_read_status": disk_read_status,
             "disk_write_status": disk_write_status,
+            "failed_logins_observation_window_seconds": (
+                round(failed_login_observation.observation_window_seconds, 2)
+                if failed_login_observation.observation_window_seconds is not None
+                else None
+            ),
         },
     })
     return event
@@ -502,6 +557,63 @@ class EventSender:
         self.retry_delay = self.config["retry"]["initial_seconds"]
 
 
+def _endpoint_activity_event(
+    config: dict[str, Any], activity: dict[str, Any]
+) -> dict[str, Any]:
+    event = endpoint_identity(
+        config["endpoint"]["role"], config["endpoint"]["category"]
+    )
+    event.update(activity)
+    event.update({
+        "event_id": str(uuid.uuid4()),
+        "source": "endpoint_sensor",
+        "timestamp": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z"),
+    })
+    return event
+
+
+def _endpoint_activity_worker(
+    config: dict[str, Any],
+    sensor_stop_event: threading.Event,
+    worker_stop_event: threading.Event,
+    event_queue: queue.Queue,
+) -> None:
+    """Poll removable volumes and drain path-free filesystem operation counts."""
+    from filesystem_monitor import FilesystemMonitor
+    from usb_monitor import discover_removable_volumes, volume_changes
+
+    filesystem = FilesystemMonitor()
+    previous_volumes: set[str] = set()
+    try:
+        filesystem.start()
+        poll_interval = config["endpoint_activity"]["poll_interval_seconds"]
+        while not sensor_stop_event.is_set() and not worker_stop_event.is_set():
+            discovered = discover_removable_volumes()
+            if discovered is not None:
+                current_volumes = set(discovered)
+                for activity in volume_changes(previous_volumes, current_volumes):
+                    event_queue.put(_endpoint_activity_event(config, activity))
+                pending = filesystem.sync_volumes(current_volumes)
+                for activity in pending + filesystem.drain_events():
+                    event_queue.put(_endpoint_activity_event(config, activity))
+                previous_volumes = current_volumes
+            worker_stop_event.wait(poll_interval)
+    finally:
+        filesystem.stop()
+
+
+def _drain_endpoint_activity(
+    sender: EventSender, event_queue: queue.Queue
+) -> None:
+    while True:
+        try:
+            sender.enqueue(event_queue.get_nowait())
+        except queue.Empty:
+            return
+
+
 def _check_file_shutdown(stop_event: threading.Event) -> bool:
     """Support graceful stop requests for no-console Windows builds."""
     stop_file = configuration_path().parent / "insighter_sensor.stop"
@@ -521,44 +633,99 @@ def run(config: dict[str, Any], stop_event: threading.Event = STOP_EVENT) -> Non
     sender = EventSender(config)
     interval = config["collection"]["interval_seconds"]
     sample_window = config["collection"]["sampling_window_seconds"]
+    activity_queue = queue.Queue()
+    activity_stop_event = threading.Event()
+    activity_thread = None
+    endpoint_activity = config.get("endpoint_activity") or {}
+    if endpoint_activity.get("enabled", False):
+        activity_thread = threading.Thread(
+            target=lambda: _run_endpoint_activity_worker_safely(
+                config, stop_event, activity_stop_event, activity_queue
+            ),
+            name="insighter-endpoint-activity",
+            daemon=True,
+        )
+        activity_thread.start()
+    failed_login_settings = config.get("failed_login_monitoring") or {}
+    failed_login_monitor = None
+    if failed_login_settings.get("enabled", False):
+        failed_login_monitor = FailedLoginMonitor(
+            enabled=True,
+            target_user=getpass.getuser(),
+        )
+        status = failed_login_monitor.start()
+        if status != "available":
+            LOGGER.warning(
+                "Optional Windows failed-login collection status: %s; other telemetry continues.",
+                status,
+            )
     LOGGER.info(
         "Sensor started for endpoint=%s role=%s backend=%s.",
         socket.gethostname(),
         config["endpoint"]["role"],
         event_url(config),
     )
-    while not stop_event.is_set():
-        _check_file_shutdown(stop_event)
-        if stop_event.is_set():
-            break
-        cycle_started = time.monotonic()
-        try:
-            sender.enqueue(collect_event(config))
-            LOGGER.info(
-                "Collected telemetry event id=%s; pending=%d.",
-                sender.pending[-1].get("event_id"),
-                len(sender.pending),
-            )
-        except Exception:
-            LOGGER.exception("Telemetry collection failed; the next cycle will retry.")
-
-        deadline = cycle_started + interval
-        while not stop_event.is_set() and time.monotonic() < deadline:
+    try:
+        while not stop_event.is_set():
             _check_file_shutdown(stop_event)
             if stop_event.is_set():
                 break
-            sender.send_if_due()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            cycle_started = time.monotonic()
+            try:
+                sender.enqueue(
+                    collect_event(
+                        config, failed_login_monitor=failed_login_monitor
+                    )
+                )
+                LOGGER.info(
+                    "Collected telemetry event id=%s; pending=%d.",
+                    sender.pending[-1].get("event_id"),
+                    len(sender.pending),
+                )
+            except Exception:
+                LOGGER.exception("Telemetry collection failed; the next cycle will retry.")
+
+            deadline = cycle_started + interval
+            while not stop_event.is_set() and time.monotonic() < deadline:
+                _check_file_shutdown(stop_event)
+                if stop_event.is_set():
+                    break
+                _drain_endpoint_activity(sender, activity_queue)
+                sender.send_if_due()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                retry_wait = sender.seconds_until_attempt()
+                stop_event.wait(min(remaining, retry_wait, 1.0))
+            if stop_event.is_set():
                 break
-            retry_wait = sender.seconds_until_attempt()
-            stop_event.wait(min(remaining, retry_wait, 1.0))
-        if stop_event.is_set():
-            break
-        # If collection itself took longer than expected, immediately begin the next cycle.
-        if time.monotonic() - cycle_started < sample_window:
-            stop_event.wait(max(0.0, sample_window - (time.monotonic() - cycle_started)))
-    LOGGER.info("Sensor stopped; %d unsent events remain in memory.", len(sender.pending))
+            # If collection itself took longer than expected, immediately begin the next cycle.
+            if time.monotonic() - cycle_started < sample_window:
+                stop_event.wait(max(0.0, sample_window - (time.monotonic() - cycle_started)))
+    finally:
+        activity_stop_event.set()
+        if activity_thread is not None:
+            activity_thread.join(timeout=5)
+            if activity_thread.is_alive():
+                LOGGER.error("Endpoint activity monitor did not stop within five seconds.")
+            _drain_endpoint_activity(sender, activity_queue)
+        LOGGER.info("Sensor stopped; %d unsent events remain in memory.", len(sender.pending))
+
+
+def _run_endpoint_activity_worker_safely(
+    config: dict[str, Any],
+    sensor_stop_event: threading.Event,
+    worker_stop_event: threading.Event,
+    event_queue: queue.Queue,
+) -> None:
+    try:
+        _endpoint_activity_worker(
+            config, sensor_stop_event, worker_stop_event, event_queue
+        )
+    except Exception:
+        LOGGER.exception(
+            "USB and filesystem monitoring stopped unexpectedly; existing telemetry continues."
+        )
 
 
 def _request_shutdown(signum, _frame) -> None:

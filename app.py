@@ -33,6 +33,7 @@ from auth import (
 )
 from ingestion import (
     active_directory_status,
+    ensure_endpoint_activity_schema,
     ensure_logs_schema,
     ingest_from_configured_source,
     store_events,
@@ -596,6 +597,24 @@ def sessions():
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/endpoint-activity")
+@admin_required
+def endpoint_activity():
+    """Return USB and path-free file-operation events for the admin dashboard."""
+    conn = connect()
+    conn.row_factory = Row
+    try:
+        ensure_endpoint_activity_schema(conn)
+        rows = conn.execute(
+            """SELECT * FROM endpoint_activity_events
+               ORDER BY id DESC LIMIT 300"""
+        ).fetchall()
+        return jsonify([dict(row) for row in rows])
+    finally:
+        conn.close()
+
 
 @app.route("/api/reseed", methods=["POST"])
 @admin_required

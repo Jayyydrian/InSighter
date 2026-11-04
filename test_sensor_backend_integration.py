@@ -51,6 +51,7 @@ class SensorBackendIntegrationTests(unittest.TestCase):
         )
 
     def test_sensor_payload_maps_to_model_fields_and_persists(self):
+        self.assertEqual(self.client.get("/api/whoami").status_code, 302)
         event = {
             "event_id": "sensor-event-001",
             "username": "operator",
@@ -137,6 +138,90 @@ class SensorBackendIntegrationTests(unittest.TestCase):
         statuses = json.loads(row[3])
         self.assertEqual(statuses["data_transferred_mb"], "unsupported")
 
+    def test_available_failed_login_zero_is_persisted_as_supported_not_missing(self):
+        event = {
+            "event_id": "sensor-failed-login-zero",
+            "user": "ENDPOINT-03\\intern",
+            "endpoint_id": "ENDPOINT-03",
+            "role": "intern",
+            "category": "private_documents",
+            "login_hour": 10,
+            "failed_logins": 0,
+            "off_hours": 0,
+            "telemetry_status": {
+                "network": "machine_wide_delta",
+                "failed_logins": "available",
+            },
+        }
+
+        response = self._post_sensor_event(event)
+
+        self.assertEqual(response.get_json(), {"status": "ok", "inserted": 1})
+        conn = database.connect()
+        try:
+            row = conn.execute(
+                """SELECT failed_logins, files_accessed, feature_status
+                   FROM logs WHERE user = ?""",
+                ("ENDPOINT-03\\intern",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row[0:2], (0, None))
+        statuses = json.loads(row[2])
+        self.assertEqual(statuses["failed_logins"], "supported")
+        self.assertEqual(statuses["files_accessed"], "unsupported")
+
+    def test_failed_login_count_is_null_unless_collector_reports_available(self):
+        event = {
+            "event_id": "sensor-failed-login-unavailable",
+            "user": "ENDPOINT-04\\intern",
+            "role": "intern",
+            "category": "private_documents",
+            "login_hour": 10,
+            "failed_logins": 4,
+            "off_hours": 0,
+            "telemetry_status": {"failed_logins": "unavailable"},
+        }
+
+        response = self._post_sensor_event(event)
+
+        self.assertEqual(response.status_code, 200)
+        conn = database.connect()
+        try:
+            row = conn.execute(
+                """SELECT failed_logins, feature_status FROM logs WHERE user = ?""",
+                ("ENDPOINT-04\\intern",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNone(row[0])
+        self.assertEqual(json.loads(row[1])["failed_logins"], "unsupported")
+
+    def test_invalid_available_failed_login_value_remains_null(self):
+        event = {
+            "event_id": "sensor-failed-login-invalid",
+            "user": "ENDPOINT-05\\intern",
+            "role": "intern",
+            "category": "private_documents",
+            "login_hour": 10,
+            "failed_logins": True,
+            "off_hours": 0,
+            "telemetry_status": {"failed_logins": "available"},
+        }
+
+        response = self._post_sensor_event(event)
+
+        self.assertEqual(response.status_code, 200)
+        conn = database.connect()
+        try:
+            value = conn.execute(
+                "SELECT failed_logins FROM logs WHERE user = ?",
+                ("ENDPOINT-05\\intern",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIsNone(value)
+
     def test_legacy_sensor_rows_receive_conservative_quality_status(self):
         conn = database.connect()
         try:
@@ -192,6 +277,141 @@ class SensorBackendIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(count, 1)
+
+    def test_endpoint_activity_uses_additive_table_and_stays_out_of_model_logs(self):
+        event = {
+            "event_id": "usb-connect-001",
+            "source": "endpoint_sensor",
+            "event_type": "usb_connected",
+            "timestamp": "2026-11-05T00:00:00Z",
+            "user": "ENDPOINT-USB\\operator",
+            "username": "operator",
+            "endpoint_id": "ENDPOINT-USB",
+            "hostname": "ENDPOINT-USB",
+            "role": "researcher",
+            "category": "projects",
+            "drive_letter": "E:\\",
+            "sensor_version": "1.0.0",
+        }
+        conn = database.connect()
+        try:
+            original_log_count = conn.execute(
+                "SELECT COUNT(*) FROM logs"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        first = self._post_sensor_event(event)
+        replay = self._post_sensor_event(event)
+
+        self.assertEqual(first.get_json(), {"status": "ok", "inserted": 1})
+        self.assertEqual(replay.get_json(), {"status": "ok", "inserted": 0})
+        conn = database.connect()
+        try:
+            activity = conn.execute(
+                """SELECT event_type, drive_letter, operation_counts, payload_encrypted
+                   FROM endpoint_activity_events WHERE event_id = ?""",
+                ("usb-connect-001",),
+            ).fetchone()
+            log_count = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(activity[:3], ("usb_connected", "E:\\", "{}"))
+        self.assertTrue(activity[3])
+        self.assertEqual(log_count, original_log_count)
+        from model import score_users
+
+        self.assertNotIn(
+            "ENDPOINT-USB\\operator",
+            [scored_user["user"] for scored_user in score_users()],
+        )
+
+    def test_filesystem_activity_persists_operation_counts_without_paths(self):
+        event = {
+            "event_id": "file-counts-001",
+            "source": "endpoint_sensor",
+            "event_type": "filesystem_activity",
+            "timestamp": "2026-11-05T00:00:00Z",
+            "user": "ENDPOINT-FILES\\operator",
+            "endpoint_id": "ENDPOINT-FILES",
+            "role": "researcher",
+            "category": "projects",
+            "drive_letter": "F:\\",
+            "operation_counts": {
+                "create": 2,
+                "modify": 1,
+                "delete": 1,
+                "rename": 1,
+            },
+        }
+
+        response = self._post_sensor_event(event)
+
+        self.assertEqual(response.get_json(), {"status": "ok", "inserted": 1})
+        conn = database.connect()
+        try:
+            row = conn.execute(
+                """SELECT event_type, operation_counts, payload_encrypted
+                   FROM endpoint_activity_events WHERE event_id = ?""",
+                ("file-counts-001",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row[0], "filesystem_activity")
+        self.assertEqual(
+            json.loads(row[1]),
+            {"create": 2, "delete": 1, "modify": 1, "rename": 1},
+        )
+        self.assertTrue(row[2])
+
+    def test_filesystem_activity_rejects_file_names_and_paths(self):
+        event = {
+            "event_id": "file-path-rejected",
+            "source": "endpoint_sensor",
+            "event_type": "filesystem_activity",
+            "timestamp": "2026-11-05T00:00:00Z",
+            "user": "ENDPOINT-FILES\\operator",
+            "endpoint_id": "ENDPOINT-FILES",
+            "role": "researcher",
+            "category": "projects",
+            "drive_letter": "F:\\",
+            "operation_counts": {"modify": 1},
+            "file_name": "secret.txt",
+        }
+
+        response = self._post_sensor_event(event)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json(), {"error": "Invalid event data."})
+        conn = database.connect()
+        try:
+            table = conn.execute(
+                """SELECT name FROM sqlite_master
+                   WHERE type = 'table' AND name = 'endpoint_activity_events'"""
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNone(table)
+
+    def test_endpoint_activity_rejects_data_category_outside_active_sector(self):
+        response = self._post_sensor_event({
+            "event_id": "usb-invalid-category",
+            "source": "endpoint_sensor",
+            "event_type": "usb_connected",
+            "timestamp": "2026-11-05T00:00:00Z",
+            "user": "ENDPOINT-USB\\operator",
+            "endpoint_id": "ENDPOINT-USB",
+            "role": "researcher",
+            "category": "drone_platform_access",
+            "drive_letter": "E:\\",
+        })
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_endpoint_activity_api_remains_admin_only(self):
+        response = self.client.get("/api/endpoint-activity")
+
+        self.assertEqual(response.status_code, 302)
 
     def test_sensor_requires_valid_service_token(self):
         response = self._post_sensor_event({"username": "operator"}, token="wrong-token")

@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 
 import requests
 
@@ -18,10 +19,113 @@ from sector_config import (
     get_sector_roster, role_allowed,
 )
 
+ENDPOINT_ACTIVITY_TYPES = {
+    "usb_connected",
+    "usb_disconnected",
+    "filesystem_activity",
+}
+FILE_OPERATION_NAMES = {"create", "modify", "delete", "rename"}
+
 
 def _default_role_for_user(user, sector):
     """Best-effort role lookup for users in the generated sector roster."""
     return dict((username, role) for username, role in get_sector_roster(sector)).get(user)
+
+
+def ensure_endpoint_activity_schema(conn):
+    """Create the additive endpoint-event table without modifying existing records."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS endpoint_activity_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            timestamp TEXT NOT NULL,
+            ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            endpoint_id TEXT NOT NULL,
+            user TEXT NOT NULL,
+            role TEXT NOT NULL,
+            data_category TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'endpoint_sensor',
+            event_type TEXT NOT NULL CHECK (
+                event_type IN ('usb_connected', 'usb_disconnected', 'filesystem_activity')
+            ),
+            drive_letter TEXT NOT NULL,
+            operation_counts TEXT NOT NULL DEFAULT '{}',
+            payload_encrypted TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_endpoint_activity_timestamp
+           ON endpoint_activity_events(timestamp DESC)"""
+    )
+
+
+def _validate_endpoint_activity_event(event):
+    allowed_fields = {
+        "event_id", "source", "timestamp", "user", "username", "endpoint_id",
+        "hostname", "os_info", "role", "category", "data_category",
+        "sensor_version", "event_type", "drive_letter", "operation_counts",
+    }
+    if set(event) - allowed_fields:
+        raise ValueError("Endpoint activity events may not include file names or paths.")
+    if event.get("source") not in (None, "endpoint_sensor"):
+        raise ValueError("Endpoint activity source is invalid.")
+
+    event_type = event.get("event_type")
+    if event_type not in ENDPOINT_ACTIVITY_TYPES:
+        raise ValueError("Endpoint activity event type is invalid.")
+    drive_letter = event.get("drive_letter")
+    if not isinstance(drive_letter, str) or not re.fullmatch(
+        r"[A-Za-z]:[\\/]", drive_letter
+    ):
+        raise ValueError("Endpoint activity must identify a drive root.")
+
+    event_id = event.get("event_id")
+    if not isinstance(event_id, str) or not 1 <= len(event_id) <= 128:
+        raise ValueError("Endpoint activity requires a valid event ID.")
+    user = event.get("user", event.get("username"))
+    endpoint_id = event.get("endpoint_id", event.get("hostname"))
+    if not isinstance(user, str) or not user.strip() or len(user) > 255:
+        raise ValueError("Endpoint activity requires a valid user identity.")
+    if not isinstance(endpoint_id, str) or not endpoint_id.strip() or len(endpoint_id) > 255:
+        raise ValueError("Endpoint activity requires a valid endpoint identity.")
+
+    timestamp = event.get("timestamp")
+    if not isinstance(timestamp, str):
+        raise ValueError("Endpoint activity requires an ISO timestamp.")
+    try:
+        parsed_timestamp = datetime.fromisoformat(
+            timestamp.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("Endpoint activity timestamp is invalid.") from exc
+    if parsed_timestamp.tzinfo is None:
+        raise ValueError("Endpoint activity timestamp must include a timezone.")
+
+    operation_counts = event.get("operation_counts", {})
+    if event_type == "filesystem_activity":
+        if not isinstance(operation_counts, dict) or not operation_counts:
+            raise ValueError("Filesystem activity requires operation counts.")
+        if set(operation_counts) - FILE_OPERATION_NAMES:
+            raise ValueError("Filesystem activity operation is invalid.")
+        if any(
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or not 1 <= count <= 1_000_000_000
+            for count in operation_counts.values()
+        ):
+            raise ValueError("Filesystem activity counts must be positive integers.")
+    elif operation_counts:
+        raise ValueError("USB events cannot contain file operation counts.")
+
+    return {
+        "event_id": event_id,
+        "timestamp": timestamp,
+        "endpoint_id": endpoint_id.strip(),
+        "user": user.strip(),
+        "event_type": event_type,
+        "drive_letter": drive_letter.upper(),
+        "operation_counts": operation_counts,
+    }
 
 
 def ensure_logs_schema():
@@ -101,6 +205,15 @@ def store_events(events, source="api"):
         for event in events:
             if not isinstance(event, dict):
                 raise ValueError("Each event must be a JSON object.")
+            is_endpoint_activity = (
+                source == "endpoint_sensor" and "event_type" in event
+            )
+            activity = (
+                _validate_endpoint_activity_event(event)
+                if is_endpoint_activity else None
+            )
+            if activity is not None:
+                ensure_endpoint_activity_schema(conn)
             normalized_event = event
             feature_status = None
             if source == "endpoint_sensor":
@@ -116,6 +229,18 @@ def store_events(events, source="api"):
                 raw_transfer = event.get(
                     "data_transferred_mb", event.get("mb_transferred")
                 )
+                reported_failed_logins = event.get("failed_logins")
+                reported_telemetry = event.get("telemetry_status")
+                failed_login_status = (
+                    reported_telemetry.get("failed_logins")
+                    if isinstance(reported_telemetry, dict) else None
+                )
+                failed_logins_observed = (
+                    failed_login_status == "available"
+                    and isinstance(reported_failed_logins, int)
+                    and not isinstance(reported_failed_logins, bool)
+                    and reported_failed_logins >= 0
+                )
                 if "telemetry_status" not in event:
                     transfer_observed = raw_transfer is not None
                 else:
@@ -128,7 +253,9 @@ def store_events(events, source="api"):
                     raw_transfer if transfer_observed else None
                 )
                 normalized_event["files_accessed"] = None
-                normalized_event["failed_logins"] = None
+                normalized_event["failed_logins"] = (
+                    reported_failed_logins if failed_logins_observed else None
+                )
                 normalized_event["off_hours_access"] = event.get(
                     "off_hours_access", event.get("off_hours")
                 )
@@ -145,7 +272,9 @@ def store_events(events, source="api"):
                     "data_transferred_mb": (
                         "machine_wide" if transfer_observed else "unsupported"
                     ),
-                    "failed_logins": "unsupported",
+                    "failed_logins": (
+                        "supported" if failed_logins_observed else "unsupported"
+                    ),
                     "off_hours_access": (
                         "supported"
                         if normalized_event.get("off_hours_access") is not None
@@ -175,6 +304,31 @@ def store_events(events, source="api"):
                 )
                 if inserted_id.rowcount == 0:
                     continue
+            if activity is not None:
+                conn.execute(
+                    """INSERT INTO endpoint_activity_events
+                       (event_id, timestamp, endpoint_id, user, role, data_category,
+                        event_type, drive_letter, operation_counts, payload_encrypted)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        activity["event_id"],
+                        activity["timestamp"],
+                        activity["endpoint_id"],
+                        row["user"],
+                        row["role"],
+                        data_category,
+                        activity["event_type"],
+                        activity["drive_letter"],
+                        json.dumps(
+                            activity["operation_counts"],
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        row["payload_encrypted"],
+                    ),
+                )
+                inserted += 1
+                continue
             conn.execute(
                 """INSERT INTO logs
                 (user, login_hour, files_accessed, data_transferred_mb,

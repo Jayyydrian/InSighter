@@ -46,7 +46,7 @@ def main() -> int:
     if os.name != "nt":
         parser.error("Build the Windows executable on Windows.")
     missing = [
-        package for package in ("psutil", "requests")
+        package for package in ("psutil", "requests", "watchdog")
         if importlib.util.find_spec(package) is None
     ]
     if missing:
