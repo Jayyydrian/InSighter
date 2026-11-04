@@ -94,6 +94,30 @@ class ScoreHistoryContractTests(Phase3ContractTestCase):
         self.assertIsInstance(payload[0]["risk_score"], (int, float))
         self.assertIn(payload[0]["risk_level"], {"LOW", "MEDIUM", "HIGH"})
 
+    def test_sessions_distinguish_unavailable_sensor_features(self):
+        tab = SessionsTab(object())
+        tab._apply_refresh([{
+            "id": 1,
+            "user": "HOST\\operator",
+            "role": "researcher",
+            "source": "endpoint_sensor",
+            "login_hour": 10,
+            "files_accessed": None,
+            "data_transferred_mb": 1.25,
+            "failed_logins": None,
+            "off_hours_access": 0,
+            "feature_status": (
+                '{"login_hour":"supported","files_accessed":"unsupported",'
+                '"data_transferred_mb":"machine_wide","failed_logins":"unsupported",'
+                '"off_hours_access":"supported"}'
+            ),
+        }])
+
+        self.assertEqual(tab.table.item(0, 5).text(), "Unavailable")
+        self.assertEqual(tab.table.item(0, 7).text(), "Unavailable")
+        self.assertEqual(tab.table.item(0, 9).text(), "2/5; not scored")
+        tab.close()
+
     def test_dashboard_history_consumes_score_and_level_pair(self):
         tab = DashboardTab(object())
         tab._refresh_scores([score_row()])

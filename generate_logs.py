@@ -23,7 +23,8 @@ def generate():
             role TEXT DEFAULT 'unknown',
             source TEXT DEFAULT 'synthetic',
             payload_encrypted TEXT DEFAULT '',
-            ingested_at TEXT DEFAULT CURRENT_TIMESTAMP
+            ingested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            feature_status TEXT
         )
     """)
 
