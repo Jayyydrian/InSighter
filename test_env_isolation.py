@@ -22,7 +22,7 @@ class EnvironmentIsolationTests(unittest.TestCase):
 
     def test_non_loopback_host_logs_exposure_warning(self):
         with self.assertLogs("host_binding", level="WARNING") as captured:
-            warn_if_non_loopback_host("0.0.0.0")
+            warn_if_non_loopback_host("0.0.0.0")  # nosec B104
         self.assertIn("publishes unauthenticated routes", captured.output[0])
 
     def test_loopback_host_does_not_log_exposure_warning(self):
