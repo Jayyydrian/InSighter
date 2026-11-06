@@ -336,7 +336,7 @@ class ServerLauncherTest(unittest.TestCase):
         self.assertIn("INSIGHTER_SECRET_KEY", popen.call_args.kwargs["env"])
 
     def test_launcher_does_not_pass_host_override_to_backend(self):
-        os.environ["INSIGHTER_HOST"] = "0.0.0.0"
+        os.environ["INSIGHTER_HOST"] = "0.0.0.0"  # nosec B104 - test-only host override
         process = FakeProcess()
         with patch.object(server_launcher.subprocess, "Popen", return_value=process) as spawn:
             self.assertTrue(server_launcher._start_backend_process())
