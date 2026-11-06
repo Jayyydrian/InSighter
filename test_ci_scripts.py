@@ -1,8 +1,10 @@
+import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.run_tests_ci import (
     _discover_tests,
+    _repository_database_state,
     _test_mutations,
     check_test_floor,
     parse_counts,
@@ -64,6 +66,14 @@ class RunTestsCiScriptTests(unittest.TestCase):
             "?? package/__pycache__/module.pyc": "bytecode-hash",
         }
         self.assertEqual(_test_mutations(before, after), [])
+
+    def test_repository_database_state_checks_existence_without_opening_content(self):
+        with tempfile.TemporaryDirectory(prefix="ci-database-state-") as directory:
+            root = Path(directory)
+            self.assertFalse(_repository_database_state(root))
+            database_path = root / "database.db"
+            database_path.write_bytes(b"disposable")
+            self.assertTrue(_repository_database_state(root))
 
     def test_runner_discovers_same_tests_as_plain_unittest_discovery(self):
         runner_suite = _discover_tests(ROOT)

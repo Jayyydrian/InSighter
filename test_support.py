@@ -2,6 +2,7 @@ import atexit
 from contextlib import contextmanager
 import os
 import tempfile
+from pathlib import Path
 
 import database
 
@@ -53,7 +54,15 @@ def isolate_database():
     database_path = os.path.join(_database_directory.name, "test.db")
     os.environ["INSIGHTER_DB_PATH"] = database_path
     database.DB_PATH = database_path
+    assert_database_isolated()
     return database_path
+
+
+def assert_database_isolated():
+    database_path = Path(database.DB_PATH).expanduser().resolve()
+    repository_database = (Path(__file__).resolve().parent / "database.db").resolve()
+    if database_path == repository_database:
+        raise RuntimeError("Tests must not use the repository database.db.")
 
 
 def temporary_database_path():
@@ -75,3 +84,9 @@ def create_test_user(username, password, role):
         return conn.execute("SELECT id FROM users WHERE username = ?", (normalized_username,)).fetchone()[0]
     finally:
         conn.close()
+
+
+if not os.environ.get("INSIGHTER_DB_PATH"):
+    isolate_database()
+else:
+    assert_database_isolated()

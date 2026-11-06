@@ -1,4 +1,5 @@
 import csv
+import os
 import subprocess
 import sys
 import tempfile
@@ -89,12 +90,26 @@ except ValueError:
 else:
     raise RuntimeError("CERT score guard did not raise ValueError")
 """
-        result = subprocess.run(
-            [sys.executable, "-O", "-c", code],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="cert-subprocess-") as directory:
+            profile = Path(directory) / "profile"
+            profile.mkdir()
+            environment = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("INSIGHTER_")
+            }
+            environment.update({
+                "INSIGHTER_DB_PATH": str(Path(directory) / "tests.db"),
+                "INSIGHTER_PORT": "0",
+                "USERPROFILE": str(profile),
+            })
+            result = subprocess.run(
+                [sys.executable, "-O", "-c", code],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
     def test_default_cert_scoring_passes_cert_features_to_ensemble(self):

@@ -6,7 +6,9 @@ import database
 from auth import init_users_table
 from generate_logs import generate
 from ingestion import ensure_logs_schema
-from test_support import temporary_database_path
+from test_support import isolate_database, temporary_database_path
+
+isolate_database()
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")

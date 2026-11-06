@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import os
 import io
+import importlib.util
 import re
+import socket
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -68,6 +71,10 @@ def _status_snapshot(repo_root: Path) -> dict[str, str | None]:
         for line in _git_status(repo_root)
         if not _is_ignored_path(_status_path(line))
     }
+
+
+def _repository_database_state(repo_root: Path) -> bool:
+    return (repo_root / "database.db").exists()
 
 
 def _test_mutations(
@@ -136,6 +143,8 @@ def run_tests(repo_root: Path, env: dict[str, str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    database_before = _repository_database_state(repo_root)
+    print(f"Repository database.db exists before run: {database_before}")
     baseline = _status_snapshot(repo_root)
     output = io.StringIO()
     result = unittest.TextTestRunner(stream=output, verbosity=2).run(
@@ -144,6 +153,14 @@ def run_tests(repo_root: Path, env: dict[str, str] | None = None) -> int:
     report = output.getvalue()
     print(report, end="")
     counts = parse_counts(report)
+    database_after = _repository_database_state(repo_root)
+    print(f"Repository database.db exists after run: {database_after}")
+    if database_after != database_before:
+        print(
+            "Repository database.db appeared or disappeared during tests.",
+            file=sys.stderr,
+        )
+        return 1
     if not result.wasSuccessful():
         return 1
 
@@ -162,13 +179,51 @@ def run_tests(repo_root: Path, env: dict[str, str] | None = None) -> int:
 
 
 def main() -> int:
-    env = os.environ.copy()
-    env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    env.setdefault("INSIGHTER_DISABLE_BACKGROUND_SIM", "1")
-    env.setdefault("INSIGHTER_LLM_WARMUP", "0")
-    env.setdefault("INSIGHTER_SECRET_KEY", "ci-test-key")
-    os.environ.update(env)
-    return run_tests(REPO_ROOT)
+    for name in tuple(os.environ):
+        if name.startswith("INSIGHTER_"):
+            os.environ.pop(name)
+
+    with tempfile.TemporaryDirectory(prefix="insighter-ci-") as directory:
+        root = Path(directory)
+        profile = root / "profile"
+        profile.mkdir()
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        os.environ.update(
+            {
+                "INSIGHTER_DB_PATH": str(root / "tests.db"),
+                "INSIGHTER_PORT": str(port),
+                "INSIGHTER_DISABLE_BACKGROUND_SIM": "1",
+                "INSIGHTER_LLM_WARMUP": "0",
+                "INSIGHTER_SECRET_KEY": "ci-test-key",
+                "USERPROFILE": str(profile),
+                "QT_QPA_PLATFORM": "offscreen",
+            }
+        )
+        webauthn_mode = (
+            "on" if importlib.util.find_spec("webauthn") is not None else "off"
+        )
+        platform_mode = "Windows" if os.name == "nt" else "non-Windows"
+        print(
+            f"Test mode: WebAuthn {webauthn_mode}; platform {platform_mode}"
+        )
+        print(
+            "Test environment variables: "
+            + ", ".join(
+                (
+                    "INSIGHTER_DB_PATH",
+                    "INSIGHTER_PORT",
+                    "INSIGHTER_DISABLE_BACKGROUND_SIM",
+                    "INSIGHTER_LLM_WARMUP",
+                    "INSIGHTER_SECRET_KEY",
+                    "USERPROFILE",
+                    "QT_QPA_PLATFORM",
+                    "EXPECTED_MIN_TESTS",
+                )
+            )
+        )
+        return run_tests(REPO_ROOT)
 
 
 if __name__ == "__main__":

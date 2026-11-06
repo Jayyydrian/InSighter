@@ -10,7 +10,9 @@ from unittest.mock import patch
 import bcrypt
 import database
 from auth import hash_password, init_users_table, verify_password
-from test_support import TEST_SECRET
+from test_support import TEST_SECRET, isolate_database
+
+isolate_database()
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent

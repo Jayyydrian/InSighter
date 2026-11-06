@@ -5,7 +5,9 @@ import database
 from auth import init_users_table
 from generate_logs import generate
 from ingestion import ensure_logs_schema
-from test_support import create_test_user, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
+
+isolate_database()
 
 os.environ["INSIGHTER_DISABLE_BACKGROUND_SIM"] = "1"
 os.environ["INSIGHTER_LLM_WARMUP"] = "0"

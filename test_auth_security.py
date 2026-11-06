@@ -9,7 +9,9 @@ os.environ["INSIGHTER_LLM_WARMUP"] = "0"
 
 import database
 from auth import LOGIN_COOLDOWN_SECONDS, authenticate_login, hash_password, init_users_table, verify_password
-from test_support import create_test_user, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
+
+isolate_database()
 
 
 class AuthSecurityTest(unittest.TestCase):

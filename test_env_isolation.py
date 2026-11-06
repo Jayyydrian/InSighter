@@ -28,13 +28,18 @@ class EnvironmentIsolationTests(unittest.TestCase):
                 "os.environ['INSIGHTER_LLM_WARMUP'] = '0'\n"
                 "os.environ['QT_QPA_PLATFORM'] = 'offscreen'\n"
                 "import test_support\n"
+                "test_support.isolate_database()\n"
                 "assert os.environ['INSIGHTER_SECRET_KEY'] == test_support.TEST_SECRET\n"
                 "assert os.environ['INSIGHTER_PII_SECRET'] == test_support.TEST_SECRET\n"
                 "import app\n"
             )
             for signing_key in (None, ""):
                 with self.subTest(signing_key="unset" if signing_key is None else "empty"):
-                    environment = os.environ.copy()
+                    environment = {
+                        key: value
+                        for key, value in os.environ.items()
+                        if not key.startswith("INSIGHTER_")
+                    }
                     environment.pop("INSIGHTER_SECRET_KEY", None)
                     environment.pop("INSIGHTER_PII_SECRET", None)
                     if signing_key is not None:

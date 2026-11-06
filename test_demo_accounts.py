@@ -4,7 +4,9 @@ import unittest
 import database
 from auth import authenticate_login, hash_password, init_users_table
 from scripts.demo_accounts import provision_demo_accounts, remove_demo_accounts
-from test_support import create_test_user, temporary_database_path
+from test_support import create_test_user, isolate_database, temporary_database_path
+
+isolate_database()
 
 
 class DemoAccountsTest(unittest.TestCase):
