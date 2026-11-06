@@ -1,5 +1,11 @@
 # InSighter Endpoint Sensor
 
+> **DEMO ONLY — NOT A PRODUCTION EDR AGENT.** Sensor authentication uses one
+> shared bearer token, raw host/user identifiers are stored in `logs.user`,
+> HTTP transport is permitted by configuration, and this prototype does not
+> provide production endpoint-detection-and-response assurance. Use only on
+> authorized, isolated demonstration systems.
+
 ## 1. Architecture findings
 
 The current application is a PyQt6 client and Flask backend. Its real ingestion route is `POST /api/ingest`, which originally accepted an administrator's session-authenticated request (CSRF protected), then normalized event records into `logs`. The model consumes exactly these numeric fields: `login_hour`, `files_accessed`, `data_transferred_mb`, `failed_logins`, and `off_hours_access`. Event rows also carry `user`, `role`, `source`, `data_category`, an encrypted copy of non-identity input fields, and a server-side ingestion timestamp.
@@ -106,3 +112,21 @@ The package was exercised on Windows, but this machine also has Python installed
 - HTTPS reverse proxy / production WSGI deployment and firewall hardening.
 - Field validation and operational trial on representative Windows endpoint configurations.
 - Visual demonstration on the target Admin PC and endpoint hardware.
+
+## 10. Requirements for a future Docker sensor agent
+
+The current Windows sensor is a demonstration prototype. A future containerized
+agent must not inherit its shared-token or raw-identifier design. At minimum, the
+Docker agent and its ingestion contract should provide:
+
+- Unique per-sensor credentials stored server-side only as cryptographic hashes.
+- Explicit least-privilege scopes for each sensor credential.
+- Credential rotation and revocation without rebuilding or redeploying the image.
+- TLS-protected transport with certificate verification required.
+- Per-sensor and per-source rate limits with bounded request and payload sizes.
+- Pseudonymized device and user identifiers, with any re-identification key stored
+  separately under an approved access policy.
+- A non-root container with a read-only root filesystem and only narrowly scoped
+  writable mounts.
+- Secrets injected at runtime by an approved secret manager; never baked into the
+  image, configuration layer, or source repository.

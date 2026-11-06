@@ -1,5 +1,8 @@
 # Endpoint Sensor / Telemetry Collector Production Readiness Report
 
+**Snapshot:** 5 November 2026. This is a dated assessment; its validation counts
+describe the repository state and test environment on that date.
+
 ## Executive verdict
 
 **NOT PRODUCTION READY.**
@@ -67,14 +70,15 @@ This is a repository and local-test assessment, not an external penetration test
 
 | Check | Result |
 |---|---|
-| Repository CI test runner, `EXPECTED_MIN_TESTS=285` | **308 tests passed**, no failures or errors. The CI minimum is being raised to 308 to match the verified suite count. |
+| Repository CI test runner, `EXPECTED_MIN_TESTS=480` | **480 tests passed**, 24 skipped in the base environment (22 WebAuthn tests because the optional package is absent; 2 OpenCV-dependent tests because OpenCV is absent). |
+| Optional WebAuthn full-suite check | **480 tests passed**, 2 OpenCV-dependent tests skipped; passed three consecutive runs with `webauthn==3.0.1` installed. |
 | Focused data-quality regression suite | **57 tests passed**, covering sensor/backend integration, ingestion validation, model eligibility, role/sector behavior, and desktop contracts. |
 | Python syntax compilation of changed implementation/test files | Passed. |
 | Ruff lint | Passed. |
 | `git diff --check` | Passed. |
 | Windows PyInstaller one-file, no-console package and local backend smoke tests | Previously passed in this workspace: authenticated event delivery, SQLite persistence, invalid-config logging, and stop-file shutdown. |
 
-The initial full-suite attempt failed because `ldap3`, already declared by `requirements.txt`, was absent from the active virtual environment. After installing the declared requirements, the full suite passed. No dependency manifest was changed for that environment repair.
+The earlier 308-test result is historical and is superseded by this dated 480-test measurement. The suite also passed three consecutive times without the optional WebAuthn package (24 skips each) and three times with it installed (2 skips each). No real-face inference was performed for this report.
 
 No performance or scalability measurements were taken. The endpoint package was not independently installed on a clean Windows machine without Python. Physical hotspot/Wi-Fi and Windows Firewall configuration, production HTTPS, Windows Security event-log collection, long-duration/queue-exhaustion tests, high concurrency, multi-endpoint load, and visual PyQt end-to-end automation remain unperformed.
 

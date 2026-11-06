@@ -1,7 +1,10 @@
 # InSighter — Current System Summary
 
-**Snapshot:** 4 November 2026  
+**Snapshot:** 5 November 2026
 **System type:** Local-first insider-threat monitoring proof of concept (POC)
+
+This is a dated system snapshot; validation counts below describe the repository
+state and test environment on 5 November 2026.
 
 ## 1. What the system is
 
@@ -100,7 +103,7 @@ The admin desktop navigation contains Overview, Sessions, Profiles, Role Session
 
 The repository includes tests for authentication and RBAC, recovery/demo accounts, desktop startup and async behavior, ingestion errors, model calibration, thresholds, baselines, sector behavior, audit/compliance, resources/LLM behavior, and CI safeguards. `scripts/run_tests_ci.py` discovers Python `unittest` tests and checks that tests do not unexpectedly mutate tracked files.
 
-**Current validation:** `python scripts/run_tests_ci.py` completed successfully: **308 tests passed**, no failures or errors. The Windows endpoint sensor also passed its focused tests and a packaged-executable loopback ingestion/shutdown smoke test. Ruff and `git diff --check` passed.
+**Validation snapshot (5 November 2026):** `python scripts/run_tests_ci.py` completed successfully: **480 tests passed**, with 24 skipped in the base environment (22 optional WebAuthn tests and 2 OpenCV-dependent tests). With `webauthn==3.0.1` installed, all 480 tests passed with only the 2 OpenCV-dependent tests skipped; each configuration passed three consecutive runs. The Windows endpoint sensor's packaged-executable smoke test is an earlier, separately recorded result and was not repeated for this snapshot. Ruff and `git diff --check` passed.
 
 ## 7. Current limitations and deployment caveats
 

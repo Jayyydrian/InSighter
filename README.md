@@ -102,6 +102,11 @@ exists; later starts do not reset an existing account. Supply `INSIGHTER_SECRET_
 serving over HTTPS. The desktop launcher uses `INSIGHTER_COOKIE_SECURE=0` only for its
 loopback HTTP backend; do not expose that backend to a network.
 
+Direct backend startup defaults to loopback. Setting `INSIGHTER_HOST` to a
+non-loopback address publishes unauthenticated routes (including login and
+health/freshness endpoints) on that interface; do not do this on an untrusted
+network or expose the Flask development server.
+
 The backend uses SQLite-backed opaque sessions with idle and absolute expiry. For a
 multi-instance deployment, place the database on storage with reliable SQLite locking or
 move session storage and login throttling to a shared Redis/database service before
@@ -110,6 +115,14 @@ encryption is required.
 
 When SQLCipher is unavailable, the application uses plaintext SQLite and
 `INSIGHTER_DB_KEY` has no effect; the key does not encrypt that database.
+
+Optional face authentication uses a separate `INSIGHTER_FACE_KEY` of at least
+32 bytes when `INSIGHTER_FACE_LOGIN=1`. It is independent of the Flask signing
+key and must be backed up securely. To rotate it, set
+`INSIGHTER_FACE_OLD_KEY` and `INSIGHTER_FACE_NEW_KEY`, then run
+`python scripts/rotate_face_key.py`; the script creates a non-overwriting
+database backup before re-encrypting templates. Test rotation against a
+throwaway database before using it with an existing installation.
 
 ### Desktop startup and local secrets
 
@@ -243,6 +256,12 @@ For encrypted database storage, install a compatible `sqlcipher3` build and set
 
 ### Windows endpoint sensor
 
+> **DEMO ONLY — NOT A PRODUCTION EDR AGENT.** It uses one shared bearer token,
+> stores the raw host-qualified user identifier (`HOSTNAME\username`) in
+> `logs.user`, permits HTTP transport by configuration, and does not provide
+> production endpoint-detection-and-response assurance. Use only on authorized,
+> isolated demonstration systems.
+
 The optional endpoint sensor is implemented in `sensor_agent.py`. It samples
 machine-wide network and disk counter deltas, identifies the OS process account and
 hostname, and posts events through the existing `/api/ingest` route. Its Windows
@@ -262,6 +281,11 @@ but are excluded from model scores and alerts. The sensor queue remains bounded
 in-memory state and is not preserved across process restarts. The backend remains
 loopback-bound by default; enabling endpoint access requires a private-network
 deployment and appropriate HTTPS/firewall controls.
+
+Any future Docker sensor agent must use per-sensor hashed tokens and least-privilege
+scopes, support credential rotation/revocation, require TLS and rate limits,
+pseudonymize identifiers, run non-root with a read-only filesystem, and receive
+secrets only at runtime. See [ENDPOINT_SENSOR.md](./ENDPOINT_SENSOR.md).
 
 ### Active Directory ingestion
 
