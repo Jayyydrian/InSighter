@@ -7,11 +7,29 @@ from pathlib import Path
 from unittest.mock import patch
 
 import test_support
+from host_binding import warn_if_non_loopback_host
 from privacy import hash_identifier
 from test_support import test_environment
 
 
 class EnvironmentIsolationTests(unittest.TestCase):
+    def test_resolved_database_path_is_not_cwd_database(self):
+        test_support.isolate_database()
+        self.assertNotEqual(
+            Path(test_support.database.DB_PATH).resolve(),
+            Path.cwd() / "database.db",
+        )
+
+    def test_non_loopback_host_logs_exposure_warning(self):
+        with self.assertLogs("host_binding", level="WARNING") as captured:
+            warn_if_non_loopback_host("0.0.0.0")
+        self.assertIn("publishes unauthenticated routes", captured.output[0])
+
+    def test_loopback_host_does_not_log_exposure_warning(self):
+        for host in ("127.0.0.1", "::1", "localhost"):
+            with self.subTest(host=host), self.assertNoLogs("host_binding"):
+                warn_if_non_loopback_host(host)
+
     def test_app_imports_when_ambient_signing_key_is_unset_or_empty(self):
         project_root = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix="insighter-env-import-") as directory:

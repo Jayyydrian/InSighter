@@ -38,6 +38,7 @@ from ingestion import (
     ingest_from_configured_source,
     store_events,
 )
+from host_binding import warn_if_non_loopback_host
 from database import Row, connect, ensure_database
 from privacy import hash_identifier
 import psutil, time, os, threading, secrets, requests
@@ -995,10 +996,6 @@ def llm_stats():
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5051))
     host = os.environ.get("INSIGHTER_HOST", "127.0.0.1")
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        logging.getLogger(__name__).warning(
-            "INSIGHTER_HOST=%s exposes unauthenticated routes beyond loopback",
-            host,
-        )
+    warn_if_non_loopback_host(host)
     print(f"\n  InSighter backend -> http://{host}:{port}\n")
     app.run(host=host, debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings
