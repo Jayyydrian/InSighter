@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,12 @@ ACCOUNT_FIXTURE = (
 
 
 class AccountRecoveryTest(unittest.TestCase):
+    @staticmethod
+    def _ephemeral_port():
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory(prefix="insighter-account-recovery-")
         self.database_path = Path(self.temp_dir.name) / "legacy.db"
@@ -69,6 +76,9 @@ class AccountRecoveryTest(unittest.TestCase):
             conn.close()
 
     def _run_script(self, *arguments, db_path=None):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
         env = os.environ.copy()
         for name in tuple(env):
             if name.startswith("INSIGHTER_"):
@@ -77,7 +87,7 @@ class AccountRecoveryTest(unittest.TestCase):
             "INSIGHTER_SECRET_KEY": TEST_SECRET,
             "INSIGHTER_PII_SECRET": TEST_SECRET,
             "INSIGHTER_DB_PATH": str(db_path or self.database_path),
-            "INSIGHTER_PORT": "5051",
+            "INSIGHTER_PORT": str(port),
             "INSIGHTER_DISABLE_BACKGROUND_SIM": "1",
             "INSIGHTER_LLM_WARMUP": "0",
             "QT_QPA_PLATFORM": "offscreen",
@@ -276,7 +286,7 @@ class AccountRecoveryTest(unittest.TestCase):
         env.update({
             "INSIGHTER_SECRET_KEY": TEST_SECRET,
             "INSIGHTER_PII_SECRET": TEST_SECRET,
-            "INSIGHTER_PORT": "5051",
+            "INSIGHTER_PORT": str(self._ephemeral_port()),
             "INSIGHTER_DISABLE_BACKGROUND_SIM": "1",
             "INSIGHTER_LLM_WARMUP": "0",
             "QT_QPA_PLATFORM": "offscreen",

@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import socket
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -12,6 +13,9 @@ import sensor_agent
 
 class SensorConfigurationTests(unittest.TestCase):
     def setUp(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            self.port = sock.getsockname()[1]
         self.previous_token = os.environ.get("TEST_SENSOR_TOKEN")
         os.environ["TEST_SENSOR_TOKEN"] = "test-token-with-at-least-thirty-two-characters"
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -19,7 +23,7 @@ class SensorConfigurationTests(unittest.TestCase):
         self.config = {
             "backend": {
                 "host": "127.0.0.1",
-                "port": 5051,
+                "port": self.port,
                 "scheme": "http",
                 "path": "/api/ingest",
                 "timeout_seconds": 5,
@@ -169,10 +173,13 @@ class SensorTelemetryTests(unittest.TestCase):
 
 class SensorTransportTests(unittest.TestCase):
     def setUp(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            self.port = sock.getsockname()[1]
         self.config = {
             "backend": {
                 "host": "localhost",
-                "port": 5051,
+                "port": self.port,
                 "scheme": "https",
                 "path": "/api/ingest",
                 "timeout_seconds": 4,
@@ -196,7 +203,10 @@ class SensorTransportTests(unittest.TestCase):
         sensor_agent.post_event(event, self.config, client)
 
         args, kwargs = client.post.call_args
-        self.assertEqual(args[0], "https://localhost:5051/api/ingest")
+        self.assertEqual(
+            args[0],
+            f"https://localhost:{self.port}/api/ingest",
+        )
         self.assertEqual(kwargs["json"], {"events": [event]})
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-token")
         self.assertFalse(kwargs["allow_redirects"])

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,12 @@ class FakeProcess:
 
 
 class ServerLauncherTest(unittest.TestCase):
+    @staticmethod
+    def _ephemeral_port():
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory(prefix="insighter-launcher-")
         self.addCleanup(self.temp_dir.cleanup)
@@ -46,7 +53,7 @@ class ServerLauncherTest(unittest.TestCase):
             os.environ,
             {
                 "INSIGHTER_DB_PATH": str(self.database_path),
-                "INSIGHTER_PORT": "5051",
+                "INSIGHTER_PORT": str(self._ephemeral_port()),
                 "INSIGHTER_DB_KEY": "explicit-test-db-key",
                 "INSIGHTER_SECRET_KEY": "explicit-test-key",
                 "LOCALAPPDATA": str(self.root / "localappdata"),
@@ -394,7 +401,10 @@ class ServerLauncherTest(unittest.TestCase):
             self.assertTrue(server_launcher.ensure_backend_running())
         spawn.assert_not_called()
         preflight.assert_not_called()
-        self.assertEqual(server_launcher.BASE_URL, "http://127.0.0.1:5051")
+        self.assertEqual(
+            server_launcher.BASE_URL,
+            f"http://127.0.0.1:{server_launcher.PORT}",
+        )
 
     def test_foreign_listener_uses_next_free_port_without_stopping_it(self):
         process = FakeProcess()
