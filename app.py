@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 import re
 
 from flask import Flask, jsonify, request, redirect, url_for, session
@@ -994,5 +995,10 @@ def llm_stats():
 if __name__ == "__main__":
     port = int(os.environ.get("INSIGHTER_PORT", 5051))
     host = os.environ.get("INSIGHTER_HOST", "127.0.0.1")
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        logging.getLogger(__name__).warning(
+            "INSIGHTER_HOST=%s exposes unauthenticated routes beyond loopback",
+            host,
+        )
     print(f"\n  InSighter backend -> http://{host}:{port}\n")
     app.run(host=host, debug=False, port=port)   # debug=False -> no reloader, cleaner CPU readings

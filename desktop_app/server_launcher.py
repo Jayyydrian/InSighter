@@ -479,6 +479,7 @@ def _start_backend_process():
     int(env["INSIGHTER_PORT"])
     env["INSIGHTER_COOKIE_SECURE"] = "0"
     env["PYTHONIOENCODING"] = "utf-8"
+    env.pop("INSIGHTER_HOST", None)
 
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as log_handle:

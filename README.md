@@ -253,6 +253,10 @@ must be supplied to the sensor using the variable named by `auth.token_env`.
 
 See [ENDPOINT_SENSOR.md](./ENDPOINT_SENSOR.md) for wire-format compatibility,
 deployment, transport security, test coverage, and the sensor's explicit limitations.
+
+The backend binds to `127.0.0.1` by default. Setting `INSIGHTER_HOST` to a
+non-loopback address publishes unauthenticated routes and must not be used for
+production exposure.
 File-access counts and failed Windows logins are stored as unavailable (`null`), not
 fabricated zeroes. A `feature_status` field is persisted with each endpoint event.
 The existing per-user detector requires five measured features; sensor events do not
