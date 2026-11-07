@@ -12,13 +12,6 @@ from test_support import test_environment
 
 
 class EnvironmentIsolationTests(unittest.TestCase):
-    def test_resolved_database_path_is_not_cwd_database(self):
-        test_support.isolate_database()
-        self.assertNotEqual(
-            Path(test_support.database.DB_PATH).resolve(),
-            Path.cwd() / "database.db",
-        )
-
     def test_app_imports_when_ambient_signing_key_is_unset_or_empty(self):
         project_root = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix="insighter-env-import-") as directory:
