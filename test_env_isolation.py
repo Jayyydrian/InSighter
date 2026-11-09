@@ -1,3 +1,4 @@
+import ast
 import os
 import subprocess
 import sys
@@ -20,10 +21,31 @@ class EnvironmentIsolationTests(unittest.TestCase):
             Path.cwd() / "database.db",
         )
 
-    def test_non_loopback_host_logs_exposure_warning(self):
+    def test_non_loopback_warning_and_app_startup_call(self):
         with self.assertLogs("host_binding", level="WARNING") as captured:
             warn_if_non_loopback_host("0.0.0.0")  # nosec B104
         self.assertIn("publishes unauthenticated routes", captured.output[0])
+        app_source = (Path(__file__).resolve().parent / "app.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(app_source)
+        startup_blocks = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+        ]
+        self.assertEqual(len(startup_blocks), 1)
+        warning_calls = [
+            node
+            for node in ast.walk(startup_blocks[0])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "warn_if_non_loopback_host"
+        ]
+        self.assertEqual(len(warning_calls), 1)
 
     def test_loopback_host_does_not_log_exposure_warning(self):
         for host in ("127.0.0.1", "::1", "localhost"):
